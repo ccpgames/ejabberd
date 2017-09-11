@@ -297,7 +297,7 @@ accept(ListenSocket, Module, Opts, Interval) ->
 				   {ok, RecvPid} -> RecvPid;
 				   _ -> none
 			       end,
-		    ?INFO_MSG("(~p) Accepted connection ~s:~p -> ~s:~p",
+		    ?DEBUG("(~p) Accepted connection ~s:~p -> ~s:~p",
 			      [Receiver,
 			       ejabberd_config:may_hide_data(inet_parse:ntoa(PAddr)),
 			       PPort, inet_parse:ntoa(Addr), Port]);

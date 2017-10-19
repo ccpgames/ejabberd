@@ -1372,8 +1372,8 @@ get_role(JID, StateData) ->
       _ -> none
     end.
 
--spec get_default_role(affiliation(), state()) -> role().
-get_default_role(Affiliation, StateData) ->
+-spec get_default_role(affiliation(), jid(), state()) -> role().
+get_default_role(Affiliation, From, StateData) ->
     case Affiliation of
       owner -> moderator;
       admin -> moderator;
@@ -1385,11 +1385,21 @@ get_default_role(Affiliation, StateData) ->
 	    _ ->
 		case (StateData#state.config)#config.members_by_default
 		    of
-		  true -> participant;
+		  true -> get_temporary_override(From, StateData);
 		  _ -> visitor
 		end
 	  end
     end.
+
+-spec get_temporary_override(jid(), state()) -> role().
+get_temporary_override(JID, StateData) ->
+	LJID = jid:tolower(JID),
+	BareJid = jid:remove_resource(LJID),
+	Key = {BareJid, StateData#state.room, StateData#state.host},
+	case mod_expiring_records:fetch(Key) of
+		not_found -> participant;
+		_ -> visitor
+	end.
 
 -spec is_visitor(jid(), state()) -> boolean().
 is_visitor(Jid, StateData) ->
@@ -1783,7 +1793,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 	  Collision,
 	  mod_muc:can_use_nick(StateData#state.server_host,
 			       StateData#state.host, From, Nick),
-	  get_default_role(Affiliation, StateData)}
+	  get_default_role(Affiliation, From, StateData)}
 	of
       {false, _, _, _} when NUsers >= MaxUsers orelse NUsers >= MaxAdminUsers ->
 	  Txt = <<"Too many users in this conference">>,

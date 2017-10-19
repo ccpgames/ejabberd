@@ -1377,7 +1377,7 @@ get_default_role(Affiliation, From, StateData) ->
     case Affiliation of
       owner -> moderator;
       admin -> moderator;
-      member -> participant;
+      member -> get_temporary_role_override(From, StateData);
       outcast -> none;
       none ->
 	  case (StateData#state.config)#config.members_only of
@@ -1385,17 +1385,17 @@ get_default_role(Affiliation, From, StateData) ->
 	    _ ->
 		case (StateData#state.config)#config.members_by_default
 		    of
-		  true -> get_temporary_override(From, StateData);
+		  true -> get_temporary_role_override(From, StateData);
 		  _ -> visitor
 		end
 	  end
     end.
 
--spec get_temporary_override(jid(), state()) -> role().
-get_temporary_override(JID, StateData) ->
+-spec get_temporary_role_override(jid(), state()) -> role().
+get_temporary_role_override(JID, StateData) ->
 	LJID = jid:tolower(JID),
 	BareJid = jid:remove_resource(LJID),
-	Key = {BareJid, StateData#state.room, StateData#state.host},
+	Key = {BareJid, StateData#state.room, StateData#state.host, mute},
 	case mod_expiring_records:fetch(Key) of
 		not_found -> participant;
 		_ -> visitor

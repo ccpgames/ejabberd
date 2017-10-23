@@ -37,7 +37,9 @@
 	 get_role/2,
 	 get_affiliation/2,
 	 is_occupant_or_admin/2,
-	 route/2]).
+	 route/2,
+	 is_owner_or_admin/2
+	]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -113,6 +115,10 @@ start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueT
     p1_fsm:start_link(?MODULE, [Host, ServerHost, Access, Room, HistorySize,
 				 RoomShaper, Opts, QueueType],
 		       ?FSMOPTS).
+
+is_owner_or_admin(Pid, User) ->
+    p1_fsm:sync_send_all_state_event(Pid, {is_owner_or_admin, User}).
+
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_fsm
@@ -579,6 +585,10 @@ handle_sync_event({muc_unsubscribe, From}, _From, StateName, StateData) ->
 handle_sync_event({is_subscribed, From}, _From, StateName, StateData) ->
     IsSubs = ?DICT:is_key(jid:split(From), StateData#state.subscribers),
     {reply, IsSubs, StateName, StateData};
+handle_sync_event({is_owner_or_admin, User}, _From, StateName, StateData) ->
+	Affiliation = get_affiliation(User, StateData),
+	Result = Affiliation == owner orelse Affiliation == admin,
+	{reply, Result, StateName, StateData};
 handle_sync_event(_Event, _From, StateName,
 		  StateData) ->
     Reply = ok, {reply, Reply, StateName, StateData}.
@@ -1395,10 +1405,16 @@ get_default_role(Affiliation, From, StateData) ->
 get_temporary_role_override(JID, StateData) ->
 	LJID = jid:tolower(JID),
 	BareJid = jid:remove_resource(LJID),
-	Key = {BareJid, StateData#state.room, StateData#state.host, mute},
-	case mod_expiring_records:fetch(Key) of
-		not_found -> participant;
-		_ -> visitor
+	BanKey = {BareJid, StateData#state.room, StateData#state.host, <<"ban">>},
+	case mod_expiring_records:fetch(BanKey) of
+		not_found ->
+			MuteKey = {BareJid, StateData#state.room, StateData#state.host, <<"mute">>},
+			case mod_expiring_records:fetch(MuteKey) of
+				not_found -> participant;
+				_ -> visitor
+			end;
+
+		_ -> none
 	end.
 
 -spec is_visitor(jid(), state()) -> boolean().

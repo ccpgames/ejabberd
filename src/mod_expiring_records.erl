@@ -14,11 +14,12 @@
 
 %% API
 -export([start/2, stop/1, reload/3, depends/2]).
--export([add/3, fetch/1, size/0, trim/0]).
+-export([add/3, fetch/1, size/0, trim/0, process_local_iq/1, decode_iq_subel/1]).
 -export([mod_opt_type/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
+-include("xmpp.hrl").
 
 -record(record, {
     key,
@@ -26,11 +27,22 @@
     expires_at
 }).
 
-start(_Host, _Opts) ->
-    prepare_table(),
-    ok.
+-define(NS_EXPIRING_RECORD, <<"urn:xmpp:expiring_record">>).
 
-stop(_Host) ->
+start(Host, Opts) ->
+    prepare_table(),
+    ?INFO_MSG("Registering handler for expiring_record on ~s", [Host]),
+    IQDisc = gen_mod:get_opt(iqdisc, Opts, gen_iq_handler:iqdisc(Host)),
+    gen_iq_handler:add_iq_handler(
+        ejabberd_local,
+        Host,
+        ?NS_EXPIRING_RECORD,
+        ?MODULE,
+        process_local_iq,
+        IQDisc).
+
+stop(Host) ->
+    gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_EXPIRING_RECORD),
     ok.
 
 reload(_Host, _NewOpts, _OldOpts) ->
@@ -117,3 +129,34 @@ delete_records([]) ->
 delete_records([Head | Tail]) ->
     mnesia:delete(expiring_records, Head, write),
     delete_records(Tail).
+
+process_local_iq(#iq{type=set, lang=Lang, sub_els=[Elem]} = IQ) ->
+    Who = proplists:get_value(<<"jid">>, Elem#xmlel.attrs),
+    LJID = jid:tolower(jid:from_string(Who)),
+    Room = proplists:get_value(<<"room">>, Elem#xmlel.attrs),
+    RoomJid = jid:from_string(Room),
+    Action = proplists:get_value(<<"action">>, Elem#xmlel.attrs),
+    DurationAsString = proplists:get_value(<<"duration">>, Elem#xmlel.attrs),
+    {Duration, _} = string:to_integer(DurationAsString),
+    case mod_muc:find_online_room(RoomJid#jid.user, RoomJid#jid.server) of
+        {ok, Pid} ->
+            case mod_muc_room:is_owner_or_admin(Pid, IQ#iq.from) of
+                true ->
+                    ExpiresAt = erlang:system_time(seconds) + Duration,
+                    Key = {LJID, RoomJid#jid.user, RoomJid#jid.server, Action},
+                    ?INFO_MSG("Registering temporary ~s for ~p in ~p", [Action, Who, Room]),
+                    add(Key, ok, ExpiresAt),
+                    xmpp:make_iq_result(IQ);
+                false ->
+                    Txt = <<"Must be admin or owner">>,
+                    xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
+            end;
+        error ->
+            Txt = <<"Room not found">>,
+            xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
+    end.
+
+-spec decode_iq_subel(xmpp_element() | xmlel()) -> xmpp_element() | xmlel().
+%% Tell gen_iq_handler not to auto-decode IQ payload
+decode_iq_subel(El) ->
+    El.

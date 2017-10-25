@@ -14,7 +14,8 @@
 
 %% API
 -export([start/2, stop/1, reload/3, depends/2]).
--export([add/3, fetch/1, size/0, trim/0, process_local_iq/1, decode_iq_subel/1]).
+-export([add/3, fetch/1, delete/1, size/0, trim/0, search/1]).
+-export([process_local_iq/1, process_local_iq_search/1, decode_iq_subel/1]).
 -export([mod_opt_type/1]).
 
 -include("ejabberd.hrl").
@@ -28,6 +29,7 @@
 }).
 
 -define(NS_EXPIRING_RECORD, <<"urn:xmpp:expiring_record">>).
+-define(NS_EXPIRING_RECORD_SEARCH, <<"urn:xmpp:expiring_record#search">>).
 
 start(Host, Opts) ->
     prepare_table(),
@@ -39,6 +41,13 @@ start(Host, Opts) ->
         ?NS_EXPIRING_RECORD,
         ?MODULE,
         process_local_iq,
+        IQDisc),
+    gen_iq_handler:add_iq_handler(
+        ejabberd_local,
+        Host,
+        ?NS_EXPIRING_RECORD_SEARCH,
+        ?MODULE,
+        process_local_iq_search,
         IQDisc).
 
 stop(Host) ->
@@ -86,6 +95,19 @@ fetch(Key) ->
     {atomic, Result} = mnesia:transaction(Trans),
     Result.
 
+delete(Key) ->
+    Trans = fun() ->
+        Result = mnesia:match_object(expiring_records, #record{key = Key, value = '_', expires_at = '_'}, read),
+        case Result of
+            [{record, Key, _, _}] ->
+                mnesia:delete(expiring_records, Key, write);
+            [] ->
+                not_found
+        end
+    end,
+    {atomic, Result} = mnesia:transaction(Trans),
+    Result.
+
 size() ->
     mnesia:table_info(expiring_records, size).
 
@@ -102,6 +124,13 @@ trim() ->
     end,
     {atomic, ok} = mnesia:transaction(Trans),
     ok.
+
+search(KeyMatch) ->
+    Trans = fun() ->
+        mnesia:match_object(expiring_records, #record{key = KeyMatch, value = '_', expires_at = '_'}, read)
+    end,
+    {atomic, Result} = mnesia:transaction(Trans),
+    Result.
 
 prepare_table() ->
     DbNodes = mnesia:system_info(db_nodes),
@@ -130,23 +159,55 @@ delete_records([Head | Tail]) ->
     mnesia:delete(expiring_records, Head, write),
     delete_records(Tail).
 
+-spec process_local_iq(iq()) -> iq().
 process_local_iq(#iq{type=set, lang=Lang, sub_els=[Elem]} = IQ) ->
-    Who = proplists:get_value(<<"jid">>, Elem#xmlel.attrs),
-    LJID = jid:tolower(jid:from_string(Who)),
-    Room = proplists:get_value(<<"room">>, Elem#xmlel.attrs),
-    RoomJid = jid:from_string(Room),
-    Action = proplists:get_value(<<"action">>, Elem#xmlel.attrs),
-    DurationAsString = proplists:get_value(<<"duration">>, Elem#xmlel.attrs),
-    {Duration, _} = string:to_integer(DurationAsString),
+    {LJID, RoomJid, Action} = extract_attributes(Elem),
     case mod_muc:find_online_room(RoomJid#jid.user, RoomJid#jid.server) of
         {ok, Pid} ->
             case mod_muc_room:is_owner_or_admin(Pid, IQ#iq.from) of
                 true ->
-                    ExpiresAt = erlang:system_time(seconds) + Duration,
-                    Key = {LJID, RoomJid#jid.user, RoomJid#jid.server, Action},
-                    ?INFO_MSG("Registering temporary ~s for ~p in ~p", [Action, Who, Room]),
-                    add(Key, ok, ExpiresAt),
-                    xmpp:make_iq_result(IQ);
+                    Category = proplists:get_value(<<"category">>, Elem#xmlel.attrs),
+                    Key = {LJID, RoomJid#jid.user, RoomJid#jid.server, Category},
+                    case Action of
+                        <<"set">> ->
+                            DurationAsString = proplists:get_value(<<"duration">>, Elem#xmlel.attrs),
+                            {Duration, _} = string:to_integer(DurationAsString),
+                            ExpiresAt = erlang:system_time(seconds) + Duration,
+                            ?INFO_MSG("Registering temporary ~s: ~p", [Category, Key]),
+                            add(Key, ok, ExpiresAt),
+                            xmpp:make_iq_result(IQ);
+                        <<"delete">> ->
+                            ?INFO_MSG("Deleting temporary ~s: ~p", [Category, Key]),
+                            delete(Key),
+                            xmpp:make_iq_result(IQ)
+                    end;
+                false ->
+                    Txt = <<"Must be admin or owner">>,
+                    xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
+            end;
+        error ->
+            Txt = <<"Room not found">>,
+            xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
+    end;
+process_local_iq(#iq{type=get, lang=Lang, sub_els=[Elem]} = IQ) ->
+    Room = proplists:get_value(<<"room">>, Elem#xmlel.attrs),
+    RoomJid = jid:from_string(Room),
+    case mod_muc:find_online_room(RoomJid#jid.user, RoomJid#jid.server) of
+        {ok, Pid} ->
+            case mod_muc_room:is_owner_or_admin(Pid, IQ#iq.from) of
+                true ->
+                    Who = proplists:get_value(<<"jid">>, Elem#xmlel.attrs),
+                    LJID = jid:tolower(jid:from_string(Who)),
+                    Category = proplists:get_value(<<"category">>, Elem#xmlel.attrs),
+                    Key = {LJID, RoomJid#jid.user, RoomJid#jid.server, Category},
+                    case fetch(Key) of
+                        not_found ->
+                            Txt = <<"No entry">>,
+                            xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang));
+                        _ ->
+                            ?INFO_MSG("~s has temporary ~s in ~s", [Who, Category, RoomJid#jid.user]),
+                            xmpp:make_iq_result(IQ, #xmlel{name=Category})
+                    end;
                 false ->
                     Txt = <<"Must be admin or owner">>,
                     xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
@@ -156,7 +217,39 @@ process_local_iq(#iq{type=set, lang=Lang, sub_els=[Elem]} = IQ) ->
             xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
     end.
 
+process_local_iq_search(#iq{type=get, sub_els=[Elem]} = IQ) ->
+    Room = proplists:get_value(<<"room">>, Elem#xmlel.attrs),
+    RoomJid = jid:from_string(Room),
+    Category = proplists:get_value(<<"category">>, Elem#xmlel.attrs),
+    KeyMatch = {'_', RoomJid#jid.user, RoomJid#jid.server, Category},
+    Items = search(KeyMatch),
+    SearchResultsAsXmlel = search_results_to_xmlel(Items),
+    xmpp:make_iq_result(IQ, #xmlel{name = <<"items">>, children=SearchResultsAsXmlel}).
+
+extract_attributes(Elem) ->
+    Who = proplists:get_value(<<"jid">>, Elem#xmlel.attrs),
+    LJID = jid:tolower(jid:from_string(Who)),
+    Room = proplists:get_value(<<"room">>, Elem#xmlel.attrs),
+    RoomJid = jid:from_string(Room),
+    Action = proplists:get_value(<<"action">>, Elem#xmlel.attrs),
+    {LJID, RoomJid, Action}.
+
 -spec decode_iq_subel(xmpp_element() | xmlel()) -> xmpp_element() | xmlel().
 %% Tell gen_iq_handler not to auto-decode IQ payload
 decode_iq_subel(El) ->
     El.
+
+search_results_to_xmlel([]) ->
+    [];
+
+search_results_to_xmlel([Head|Tail]) ->
+    [item_to_xmlel(Head)|search_results_to_xmlel(Tail)].
+
+item_to_xmlel(#record{key={JID, Room, Host, Category}, value=Value, expires_at=ExpiresAt} = R) ->
+    Attrs = [
+        {<<"jid">>, jid:to_string(JID)},
+        {<<"room">>, jid:to_string(jid:make(Room, Host))},
+        {<<"category">>, Category},
+        {<<"expires_at">>, integer_to_binary(ExpiresAt)}
+    ],
+    #xmlel{name = <<"item">>, attrs = Attrs}.

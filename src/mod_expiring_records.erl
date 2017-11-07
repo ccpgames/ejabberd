@@ -80,7 +80,7 @@ fetch(Key) ->
             read),
         case Result of
             [{record, Key, Value, ExpiresAt}] ->
-                Now = erlang:system_time(second),
+                Now = erlang:system_time(seconds),
                 case Now < ExpiresAt of
                     true ->
                         {ok, Value};
@@ -113,7 +113,7 @@ size() ->
 
 trim() ->
     Trans = fun() ->
-        Now = erlang:system_time(second),
+        Now = erlang:system_time(seconds),
         MatchHead = #record{key='$1', expires_at = '$2', _='_'},
         Guard = {'>', Now, '$2'},
         Result = '$1',

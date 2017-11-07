@@ -171,7 +171,7 @@ process_local_iq(#iq{type=set, lang=Lang, sub_els=[Elem]} = IQ) ->
                     case Action of
                         <<"set">> ->
                             DurationAsString = proplists:get_value(<<"duration">>, Elem#xmlel.attrs),
-                            {Duration, _} = string:to_integer(DurationAsString),
+                            {Duration, _} = string:to_integer(binary_to_list(DurationAsString)),
                             ExpiresAt = erlang:system_time(seconds) + Duration,
                             ?INFO_MSG("Registering temporary ~s: ~p", [Category, Key]),
                             add(Key, ok, ExpiresAt),

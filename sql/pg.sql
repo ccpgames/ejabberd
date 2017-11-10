@@ -272,10 +272,20 @@ CREATE TABLE muc_room (
     name text NOT NULL,
     host text NOT NULL,
     opts text NOT NULL,
+    title text NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX i_muc_room_name_host ON muc_room USING btree (name, host);
+
+CREATE TABLE muc_room_affiliation (
+  name text NOT NULL,
+  host text NOT NULL,
+  username text NOT NULL,
+  affiliation text NOT NULL
+);
+
+CREATE UNIQUE INDEX i_muc_room_affiliation_name_host_username ON muc_room_affiliation USING BTREE (name, host, username);
 
 CREATE TABLE muc_registered (
     jid text NOT NULL,

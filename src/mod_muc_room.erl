@@ -1282,36 +1282,61 @@ get_affiliation(JID, StateData) ->
 	      of
 	    allow -> owner;
 	    _ ->
-		LJID = jid:tolower(JID),
-		case (?DICT):find(LJID, StateData#state.affiliations) of
-		  {ok, Affiliation} -> Affiliation;
-		  _ ->
-		      LJID1 = jid:remove_resource(LJID),
-		      case (?DICT):find(LJID1, StateData#state.affiliations)
-			  of
-			{ok, Affiliation} -> Affiliation;
-			_ ->
-			    LJID2 = setelement(1, LJID, <<"">>),
-			    case (?DICT):find(LJID2,
-					      StateData#state.affiliations)
-				of
-			      {ok, Affiliation} -> Affiliation;
-			      _ ->
-				  LJID3 = jid:remove_resource(LJID2),
-				  case (?DICT):find(LJID3,
-						    StateData#state.affiliations)
-				      of
-				    {ok, Affiliation} -> Affiliation;
-				    _ -> none
-				  end
-			    end
-		      end
-		end
+			LJID = jid:tolower(JID),
+			case get_affiliation_helper(LJID, StateData) of
+				none ->
+					LJID1 = jid:remove_resource(LJID),
+					?DEBUG("User ~p has no affiliation, checking corp and alliance", [LJID1]),
+					case mod_expiring_records:fetch({association, LJID1}) of
+						not_found ->
+							?DEBUG("No association info found", []),
+							none;
+						{ok, {CorpJid, AllianceJid}} ->
+							?DEBUG("Checking corp ~p", [CorpJid]),
+							case (?DICT):find(CorpJid, StateData#state.affiliations) of
+								{ok, Affiliation} ->
+									?DEBUG("~s ~p via corp ~s", [jid:to_string(LJID1), Affiliation, jid:to_string(CorpJid)]),
+									Affiliation;
+								_ ->
+									?DEBUG("Checking alliance ~p", [AllianceJid]),
+									case (?DICT):find(AllianceJid, StateData#state.affiliations) of
+										{ok, Affiliation} ->
+											?DEBUG("~s ~p via alliance ~s", [jid:to_string(LJID1), Affiliation, jid:to_string(AllianceJid)]),
+											Affiliation;
+										_ ->
+											none
+									end
+							end
+					end;
+				Affiliation ->
+					Affiliation
+			end
 	  end,
     case Res of
       {A, _Reason} -> A;
       _ -> Res
     end.
+
+get_affiliation_helper(LJID, StateData) ->
+	case (?DICT):find(LJID, StateData#state.affiliations) of
+		{ok, Affiliation} -> Affiliation;
+		_ ->
+			LJID1 = jid:remove_resource(LJID),
+			case (?DICT):find(LJID1, StateData#state.affiliations) of
+				{ok, Affiliation} -> Affiliation;
+				_ ->
+					LJID2 = setelement(1, LJID, <<"">>),
+					case (?DICT):find(LJID2, StateData#state.affiliations) of
+						{ok, Affiliation} -> Affiliation;
+						_ ->
+							LJID3 = jid:remove_resource(LJID2),
+							case (?DICT):find(LJID3, StateData#state.affiliations) of
+								{ok, Affiliation} -> Affiliation;
+								_ -> none
+							end
+					end
+			end
+	end.
 
 -spec get_service_affiliation(jid(), state()) -> owner | none.
 get_service_affiliation(JID, StateData) ->
@@ -1410,8 +1435,14 @@ get_temporary_role_override(JID, StateData) ->
 		not_found ->
 			MuteKey = {BareJid, StateData#state.room, StateData#state.host, <<"mute">>},
 			case mod_expiring_records:fetch(MuteKey) of
-				not_found -> participant;
-				_ -> visitor
+				not_found ->
+                    case (StateData#state.config)#config.members_by_default of
+                        true -> participant;
+                        _ -> visitor
+                    end;
+				_ ->
+                    % User is temporarily muted
+                    visitor
 			end;
 
 		_ -> none
@@ -2631,70 +2662,82 @@ process_item_change(UJID) ->
 	    process_item_change(Item, SD, UJID)
     end.
 
+-spec remove_nonmembers_when_user_is_association(jid(), state()) -> state().
+remove_nonmembers_when_user_is_association(JID, StateData) ->
+	LJID = jid:tolower(JID),
+	case mod_expiring_records:fetch({is_association, LJID}) of
+		{ok, ok} ->
+			remove_nonmembers(StateData);
+		_ -> StateData
+	end.
+
 -type admin_action() :: {jid(), affiliation | role,
 			 affiliation() | role(), binary()}.
 
 -spec process_item_change(admin_action(), state(), undefined | jid()) -> state() | {error, stanza_error()}.
 process_item_change(Item, SD, UJID) ->
     try case Item of
-	    {JID, affiliation, owner, _} when JID#jid.luser == <<"">> ->
-		%% If the provided JID does not have username,
-		%% forget the affiliation completely
-		SD;
-	    {JID, role, none, Reason} ->
-		send_kickban_presence(UJID, JID, Reason, 307, SD),
-		set_role(JID, none, SD);
-	    {JID, affiliation, none, Reason} ->
-		case (SD#state.config)#config.members_only of
-		    true ->
-			send_kickban_presence(UJID, JID, Reason, 321, none, SD),
-			maybe_send_affiliation(JID, none, SD),
-			SD1 = set_affiliation(JID, none, SD),
-			set_role(JID, none, SD1);
-		    _ ->
-			SD1 = set_affiliation(JID, none, SD),
-			send_update_presence(JID, Reason, SD1, SD),
-			maybe_send_affiliation(JID, none, SD1),
-			SD1
-		end;
-	    {JID, affiliation, outcast, Reason} ->
-		send_kickban_presence(UJID, JID, Reason, 301, outcast, SD),
-		maybe_send_affiliation(JID, outcast, SD),
-		set_affiliation(JID, outcast, set_role(JID, none, SD), Reason);
-	    {JID, affiliation, A, Reason} when (A == admin) or (A == owner) ->
-		SD1 = set_affiliation(JID, A, SD, Reason),
-		SD2 = set_role(JID, moderator, SD1),
-		send_update_presence(JID, Reason, SD2, SD),
-		maybe_send_affiliation(JID, A, SD2),
-		SD2;
-	    {JID, affiliation, member, Reason} ->
-		SD1 = set_affiliation(JID, member, SD, Reason),
-		SD2 = set_role(JID, participant, SD1),
-		send_update_presence(JID, Reason, SD2, SD),
-		maybe_send_affiliation(JID, member, SD2),
-		SD2;
-	    {JID, role, Role, Reason} ->
-		SD1 = set_role(JID, Role, SD),
-		send_new_presence(JID, Reason, SD1, SD),
-		SD1;
-	    {JID, affiliation, A, _Reason} ->
-		SD1 = set_affiliation(JID, A, SD),
-		send_update_presence(JID, SD1, SD),
-		maybe_send_affiliation(JID, A, SD1),
-		SD1
-	end
+            {JID, affiliation, owner, _} when JID#jid.luser == <<"">> ->
+                %% If the provided JID does not have username,
+                %% forget the affiliation completely
+                SD;
+            {JID, role, none, Reason} ->
+                send_kickban_presence(UJID, JID, Reason, 307, SD),
+                SD1 = set_role(JID, none, SD),
+                remove_nonmembers_when_user_is_association(JID, SD1);
+            {JID, affiliation, none, Reason} ->
+                case (SD#state.config)#config.members_only of
+                    true ->
+                        send_kickban_presence(UJID, JID, Reason, 321, none, SD),
+                        maybe_send_affiliation(JID, none, SD),
+                        SD1 = set_affiliation(JID, none, SD),
+                        SD2 = set_role(JID, none, SD1),
+                        remove_nonmembers_when_user_is_association(JID, SD2);
+                    _ ->
+                        SD1 = set_affiliation(JID, none, SD),
+                        send_update_presence(JID, Reason, SD1, SD),
+                        maybe_send_affiliation(JID, none, SD1),
+                        SD1
+                end;
+            {JID, affiliation, outcast, Reason} ->
+                send_kickban_presence(UJID, JID, Reason, 301, outcast, SD),
+                maybe_send_affiliation(JID, outcast, SD),
+                SD1 = set_affiliation(JID, outcast, set_role(JID, none, SD), Reason),
+                remove_nonmembers_when_user_is_association(JID, SD1);
+            {JID, affiliation, A, Reason} when (A == admin) or (A == owner) ->
+                SD1 = set_affiliation(JID, A, SD, Reason),
+                SD2 = set_role(JID, moderator, SD1),
+                send_update_presence(JID, Reason, SD2, SD),
+                maybe_send_affiliation(JID, A, SD2),
+                SD2;
+            {JID, affiliation, member, Reason} ->
+                SD1 = set_affiliation(JID, member, SD, Reason),
+                SD2 = set_role(JID, participant, SD1),
+                send_update_presence(JID, Reason, SD2, SD),
+                maybe_send_affiliation(JID, member, SD2),
+                SD2;
+            {JID, role, Role, Reason} ->
+                SD1 = set_role(JID, Role, SD),
+                send_new_presence(JID, Reason, SD1, SD),
+                SD1;
+            {JID, affiliation, A, _Reason} ->
+                SD1 = set_affiliation(JID, A, SD),
+                send_update_presence(JID, SD1, SD),
+                maybe_send_affiliation(JID, A, SD1),
+                SD1
+        end
     catch E:R ->
-		FromSuffix = case UJID of
-			#jid{} ->
-				JidString = jid:encode(UJID),
-				<<" from ", JidString/binary>>;
-			undefined ->
-				<<"">>
-		end,
-		?ERROR_MSG("failed to set item ~p~s: ~p",
-		       [Item, FromSuffix,
-			{E, {R, erlang:get_stacktrace()}}]),
-	    {error, xmpp:err_internal_server_error()}
+        FromSuffix = case UJID of
+                         #jid{} ->
+                             JidString = jid:encode(UJID),
+                             <<" from ", JidString/binary>>;
+                         undefined ->
+                             <<"">>
+                     end,
+        ?ERROR_MSG("failed to set item ~p~s: ~p",
+            [Item, FromSuffix,
+                {E, {R, erlang:get_stacktrace()}}]),
+        {error, xmpp:err_internal_server_error()}
     end.
 
 -spec find_changed_items(jid(), affiliation(), role(),
@@ -2917,7 +2960,7 @@ send_kickban_presence(UJID, JID, Reason, Code, StateData) ->
 			    affiliation(), state()) -> ok.
 send_kickban_presence(UJID, JID, Reason, Code, NewAffiliation,
 		      StateData) ->
-    LJID = jid:tolower(JID),
+	LJID = jid:tolower(JID),
     LJIDs = case LJID of
 	      {U, S, <<"">>} ->
 		  (?DICT):fold(fun (J, _, Js) ->
@@ -3377,6 +3420,10 @@ remove_nonmembers(StateData) ->
 			Affiliation = get_affiliation(JID, SD),
 			case Affiliation of
 			  none ->
+			      catch send_kickban_presence(undefined, JID, <<"">>,
+							  322, SD),
+			      set_role(JID, none, SD);
+			  outcast ->
 			      catch send_kickban_presence(undefined, JID, <<"">>,
 							  322, SD),
 			      set_role(JID, none, SD);

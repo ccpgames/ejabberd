@@ -51,6 +51,7 @@ start(Host, Opts) ->
         IQDisc).
 
 stop(Host) ->
+    gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_EXPIRING_RECORD_SEARCH),
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_EXPIRING_RECORD),
     ok.
 
@@ -245,7 +246,7 @@ search_results_to_xmlel([]) ->
 search_results_to_xmlel([Head|Tail]) ->
     [item_to_xmlel(Head)|search_results_to_xmlel(Tail)].
 
-item_to_xmlel(#record{key={JID, Room, Host, Category}, value=Value, expires_at=ExpiresAt} = R) ->
+item_to_xmlel(#record{key={JID, Room, Host, Category}, expires_at=ExpiresAt}) ->
     Attrs = [
         {<<"jid">>, jid:to_string(JID)},
         {<<"room">>, jid:to_string(jid:make(Room, Host))},

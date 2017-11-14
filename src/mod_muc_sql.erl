@@ -57,21 +57,49 @@ init(Host, Opts) ->
     end.
 
 store_room(LServer, Host, Name, Opts) ->
+	Title = proplists:get_value(title, Opts),
+	?INFO_MSG("Room title: ~s", [Title]),
+	Affiliations = proplists:get_value(affiliations, Opts),
+	?INFO_MSG("Affiliations: ~p", [Affiliations]),
+
     SOpts = misc:term_to_expr(Opts),
     F = fun () ->
 		?SQL_UPSERT_T(
                    "muc_room",
                    ["!name=%(Name)s",
                     "!host=%(Host)s",
-                    "opts=%(SOpts)s"])
+                    "opts=%(SOpts)s",
+					"title=%(Title)s"]),
+		ejabberd_sql:sql_query_t(
+			?SQL("delete from muc_room_affiliation"
+				 " where name=%(Name)s and host=%(Host)s")
+		),
+		lists:foreach(
+			fun({JID, {A, _}}) ->
+				Username = jid:to_string(JID),
+				Affiliation = atom_to_list(A),
+				?INFO_MSG("User: ~s", [Username]),
+				?INFO_MSG("Affiliation: ~s", [Affiliation]),
+				?SQL_UPSERT_T(
+					"muc_room_affiliation",
+					[
+						"!name=%(Name)s",
+						"!host=%(Host)s",
+						"!username=%(Username)s",
+						"affiliation=%(Affiliation)s"
+					]
+				)
+			end,
+			Affiliations)
 	end,
-    ejabberd_sql:sql_transaction(LServer, F).
+	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
 
 restore_room(LServer, Host, Name) ->
     case catch ejabberd_sql:sql_query(
                  LServer,
                  ?SQL("select @(opts)s from muc_room where name=%(Name)s"
                       " and host=%(Host)s")) of
+
 	{selected, [{Opts}]} ->
 	    mod_muc:opts_to_binary(ejabberd_sql:decode_term(Opts));
 	_ ->

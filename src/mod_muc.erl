@@ -236,9 +236,7 @@ init([Host, Opts]) ->
     lists:foreach(
       fun(MyHost) ->
 	      register_iq_handlers(MyHost, IQDisc),
-	      ejabberd_router:register_route(MyHost, Host),
-	      load_permanent_rooms(MyHost, Host, Access, HistorySize,
-				   RoomShaper, QueueType)
+	      ejabberd_router:register_route(MyHost, Host)
       end, MyHosts),
     {ok, State}.
 
@@ -437,24 +435,34 @@ do_route1(Host, ServerHost, Access, HistorySize, RoomShaper,
 	error ->
 	    case is_create_request(Packet) of
 		true ->
-		    case check_user_can_create_room(
-			   ServerHost, AccessCreate, From, Room) and
-			check_create_roomid(ServerHost, Room) of
-			true ->
-			    {ok, Pid} = start_new_room(
-					  Host, ServerHost, Access,
-					  Room, HistorySize,
-					  RoomShaper, From, Nick, DefRoomOpts,
-					  QueueType),
-			    RMod:register_online_room(ServerHost, Room, Host, Pid),
-			    mod_muc_room:route(Pid, Packet),
-			    ok;
-			false ->
-			    Lang = xmpp:get_lang(Packet),
-			    ErrText = <<"Room creation is denied by service policy">>,
-			    Err = xmpp:err_forbidden(ErrText, Lang),
-			    ejabberd_router:route_error(Packet, Err)
-		    end;
+            case restore_room(ServerHost, Host, Room) of
+            error->
+                case check_user_can_create_room(
+                   ServerHost, AccessCreate, From, Room) and
+                check_create_roomid(ServerHost, Room) of
+                true ->
+                    {ok, Pid} = start_new_room(
+                          Host, ServerHost, Access,
+                          Room, HistorySize,
+                          RoomShaper, From, Nick, DefRoomOpts,
+                          QueueType),
+                    RMod:register_online_room(ServerHost, Room, Host, Pid),
+                    mod_muc_room:route(Pid, Packet),
+                    ok;
+                false ->
+                    Lang = xmpp:get_lang(Packet),
+                    ErrText = <<"Room creation is denied by service policy">>,
+                    Err = xmpp:err_forbidden(ErrText, Lang),
+                    ejabberd_router:route_error(Packet, Err)
+                end;
+            Opts ->
+                ?INFO_MSG("MUC: restore room '~s'~n", [Room]),
+                {ok, Pid} = mod_muc_room:start(Host, ServerHost, Access, Room,
+                HistorySize, RoomShaper, Opts, QueueType),
+                RMod:register_online_room(ServerHost, Room, Host, Pid),
+                mod_muc_room:route(Pid, Packet),
+                ok
+            end;
 		false ->
 		    Lang = xmpp:get_lang(Packet),
 		    ErrText = <<"Conference room does not exist">>,
@@ -678,7 +686,6 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
 
 iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
   when Node == <<"ownedbyme">> ->
-    ?INFO_MSG("iq_disco_items ownedbyme ~p", [RSM]),
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     RoomNames = Mod:get_room_names_owned_by(LServer, Host, From),
@@ -688,12 +695,10 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
         end,
         RoomNames
     ),
-    ?INFO_MSG("Rooms: ~p", [Items]),
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 
 iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
   when Node == <<"ownedbysystem">> ->
-    ?INFO_MSG("iq_disco_items ownedbysystem", []),
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     RoomNames = Mod:get_system_rooms(LServer, Host),
@@ -703,12 +708,10 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
         end,
         RoomNames
     ),
-    ?INFO_MSG("Rooms: ~p", [Items]),
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 
 iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
   when Node == <<"forme">> ->
-    ?INFO_MSG("iq_disco_items forme", []),
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     SystemRoomNames = Mod:get_system_rooms(LServer, Host),
@@ -720,7 +723,6 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
         end,
         lists:append(lists:append(SystemRoomNames, MyRooms), OtherRooms)
     ),
-    ?INFO_MSG("Rooms: ~p", [Items]),
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 
 

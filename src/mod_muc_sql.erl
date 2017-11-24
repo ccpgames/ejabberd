@@ -39,8 +39,7 @@
 	 count_online_rooms_by_user/3, get_online_rooms_by_user/3]).
 -export([set_affiliation/6, set_affiliations/4, get_affiliation/5,
 	 get_affiliations/3, search_affiliation/4]).
--export([get_room_names_owned_by/3, get_system_rooms/2, get_rooms_by_title/3,
-	get_rooms_by_affiliation/4]).
+-export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4]).
 
 -include("jid.hrl").
 -include("mod_muc.hrl").
@@ -60,9 +59,7 @@ init(Host, Opts) ->
 
 store_room(LServer, Host, Name, Opts) ->
 	Title = proplists:get_value(title, Opts),
-	?INFO_MSG("Room title: ~s", [Title]),
 	Affiliations = proplists:get_value(affiliations, Opts),
-	?INFO_MSG("Affiliations: ~p", [Affiliations]),
 
     SOpts = misc:term_to_expr(Opts),
     F = fun () ->
@@ -72,27 +69,30 @@ store_room(LServer, Host, Name, Opts) ->
                     "!host=%(Host)s",
                     "opts=%(SOpts)s",
 					"title=%(Title)s"]),
-		ejabberd_sql:sql_query_t(
-			?SQL("delete from muc_room_affiliation"
-				 " where name=%(Name)s and host=%(Host)s")
-		),
-		lists:foreach(
-			fun({JID, {A, _}}) ->
-				Username = jid:to_string(JID),
-				Affiliation = atom_to_list(A),
-				?INFO_MSG("User: ~s", [Username]),
-				?INFO_MSG("Affiliation: ~s", [Affiliation]),
-				?SQL_UPSERT_T(
-					"muc_room_affiliation",
-					[
-						"!name=%(Name)s",
-						"!host=%(Host)s",
-						"!username=%(Username)s",
-						"affiliation=%(Affiliation)s"
-					]
-				)
-			end,
-			Affiliations)
+		case Name of
+			<<"player_", _/binary>> ->
+				ejabberd_sql:sql_query_t(
+					?SQL("delete from muc_room_affiliation"
+						 " where name=%(Name)s and host=%(Host)s")
+				),
+				lists:foreach(
+					fun({JID, {A, _}}) ->
+						Username = jid:to_string(JID),
+						Affiliation = atom_to_list(A),
+						?SQL_UPSERT_T(
+							"muc_room_affiliation",
+							[
+								"!name=%(Name)s",
+								"!host=%(Host)s",
+								"!username=%(Username)s",
+								"affiliation=%(Affiliation)s"
+							]
+						)
+					end,
+					Affiliations);
+			_ ->
+				ok
+		end
 	end,
 	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
 
@@ -139,36 +139,6 @@ get_rooms(LServer, Host) ->
 				opts = mod_muc:opts_to_binary(
 					 ejabberd_sql:decode_term(Opts))}
 	      end, RoomOpts);
-	Err ->
-	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
-	    []
-    end.
-
-get_room_names_owned_by(LServer, Host, JID) ->
-    SJID = jid:encode(jid:tolower(jid:remove_resource(JID))),
-    case catch ejabberd_sql:sql_query(
-                 LServer,
-                 ?SQL("select @(name)s from muc_room_affiliation"
-                      " where host=%(Host)s"
-                      " and username=%(SJID)s"
-                      " and affiliation='owner'")) of
-	{selected, Rooms} ->
-        RoomsWithNames = lists:flatmap(
-            fun({R}) ->
-                case catch ejabberd_sql:sql_query(
-                            LServer,
-                            ?SQL("select @(title)s from muc_room"
-                                 " where host=%(Host)s"
-                                 " and name=%(R)s")) of
-                    {selected, [{Title}]} ->
-                        [{R, Title}];
-                    _ ->
-                        []
-                end
-            end,
-            Rooms
-        ),
-	    RoomsWithNames;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []

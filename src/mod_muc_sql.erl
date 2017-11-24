@@ -39,6 +39,8 @@
 	 count_online_rooms_by_user/3, get_online_rooms_by_user/3]).
 -export([set_affiliation/6, set_affiliations/4, get_affiliation/5,
 	 get_affiliations/3, search_affiliation/4]).
+-export([get_room_names_owned_by/3, get_system_rooms/2, get_rooms_by_title/3,
+	get_rooms_by_affiliation/4]).
 
 -include("jid.hrl").
 -include("mod_muc.hrl").
@@ -137,6 +139,100 @@ get_rooms(LServer, Host) ->
 				opts = mod_muc:opts_to_binary(
 					 ejabberd_sql:decode_term(Opts))}
 	      end, RoomOpts);
+	Err ->
+	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
+	    []
+    end.
+
+get_room_names_owned_by(LServer, Host, JID) ->
+    SJID = jid:encode(jid:tolower(jid:remove_resource(JID))),
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(name)s from muc_room_affiliation"
+                      " where host=%(Host)s"
+                      " and username=%(SJID)s"
+                      " and affiliation='owner'")) of
+	{selected, Rooms} ->
+        RoomsWithNames = lists:flatmap(
+            fun({R}) ->
+                case catch ejabberd_sql:sql_query(
+                            LServer,
+                            ?SQL("select @(title)s from muc_room"
+                                 " where host=%(Host)s"
+                                 " and name=%(R)s")) of
+                    {selected, [{Title}]} ->
+                        [{R, Title}];
+                    _ ->
+                        []
+                end
+            end,
+            Rooms
+        ),
+	    RoomsWithNames;
+	Err ->
+	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
+	    []
+    end.
+
+get_rooms_by_affiliation(LServer, Host, JID, Affiliation) ->
+    SJID = jid:encode(jid:tolower(jid:remove_resource(JID))),
+	Aff = atom_to_list(Affiliation),
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(name)s from muc_room_affiliation"
+                      " where host=%(Host)s"
+                      " and username=%(SJID)s"
+                      " and affiliation=%(Aff)s")) of
+	{selected, Rooms} ->
+        RoomsWithNames = lists:flatmap(
+            fun({R}) ->
+                case catch ejabberd_sql:sql_query(
+                            LServer,
+                            ?SQL("select @(title)s from muc_room"
+                                 " where host=%(Host)s"
+                                 " and name=%(R)s")) of
+                    {selected, [{Title}]} ->
+                        [{R, Title}];
+                    _ ->
+                        []
+                end
+            end,
+            Rooms
+        ),
+	    RoomsWithNames;
+	Err ->
+	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
+	    []
+    end.
+
+get_system_rooms(LServer, Host) ->
+	Filter = "system%",
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(name)s from muc_room"
+                      " where host=%(Host)s"
+                      " and name like %(Filter)s")) of
+	{selected, Rooms} ->
+        RoomsWithNames = lists:flatmap(
+            fun({R}) ->
+				[{R, R}]
+            end,
+            Rooms
+        ),
+	    RoomsWithNames;
+	Err ->
+	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
+	    []
+    end.
+
+get_rooms_by_title(LServer, Host, Name) ->
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(name)s, @(title)s from muc_room"
+                      " where host=%(Host)s"
+                      " and title=%(Name)s")) of
+	{selected, Rooms} ->
+		Rooms;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []

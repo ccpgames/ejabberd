@@ -675,6 +675,68 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
 		     undefined
 	     end,
     {result, #disco_items{node = Node, items = Items, rsm = ResRSM}};
+
+iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
+  when Node == <<"ownedbyme">> ->
+    ?INFO_MSG("iq_disco_items ownedbyme ~p", [RSM]),
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    RoomNames = Mod:get_room_names_owned_by(LServer, Host, From),
+    Items = lists:flatmap(
+        fun({R, T}) ->
+            [#disco_item{jid = jid:make(R, Host), name = T}]
+        end,
+        RoomNames
+    ),
+    ?INFO_MSG("Rooms: ~p", [Items]),
+    {result, #disco_items{node = Node, items = Items, rsm = undefined}};
+
+iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
+  when Node == <<"ownedbysystem">> ->
+    ?INFO_MSG("iq_disco_items ownedbysystem", []),
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    RoomNames = Mod:get_system_rooms(LServer, Host),
+    Items = lists:flatmap(
+        fun({R, T}) ->
+            [#disco_item{jid = jid:make(R, Host), name = T}]
+        end,
+        RoomNames
+    ),
+    ?INFO_MSG("Rooms: ~p", [Items]),
+    {result, #disco_items{node = Node, items = Items, rsm = undefined}};
+
+iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
+  when Node == <<"forme">> ->
+    ?INFO_MSG("iq_disco_items forme", []),
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    SystemRoomNames = Mod:get_system_rooms(LServer, Host),
+    MyRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, owner),
+    OtherRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, member),
+    Items = lists:flatmap(
+        fun({R, T}) ->
+            [#disco_item{jid = jid:make(R, Host), name = T}]
+        end,
+        lists:append(lists:append(SystemRoomNames, MyRooms), OtherRooms)
+    ),
+    ?INFO_MSG("Rooms: ~p", [Items]),
+    {result, #disco_items{node = Node, items = Items, rsm = undefined}};
+
+
+iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, <<"byname/", Name/binary>> = Node, RSM) ->
+    ?INFO_MSG("iq_disco_items byname ~s", [Name]),
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    RoomNames = Mod:get_rooms_by_title(LServer, Host, Name),
+    Items = lists:flatmap(
+        fun({R, T}) ->
+            [#disco_item{jid = jid:make(R, Host), name = T}]
+        end,
+        RoomNames
+    ),
+    {result, #disco_items{node = Node, items = Items, rsm = undefined}};
+
 iq_disco_items(_ServerHost, _Host, _From, Lang, _MaxRoomsDiscoItems, _Node, _RSM) ->
     {error, xmpp:err_item_not_found(<<"Node not found">>, Lang)}.
 

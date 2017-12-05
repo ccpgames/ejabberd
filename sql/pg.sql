@@ -277,6 +277,7 @@ CREATE TABLE muc_room (
 );
 
 CREATE UNIQUE INDEX i_muc_room_name_host ON muc_room USING btree (name, host);
+CREATE INDEX i_muc_room_host_name ON muc_room(host, name TEXT_PATTERN_OPS);
 
 CREATE TABLE muc_room_affiliation (
   name text NOT NULL,
@@ -286,6 +287,7 @@ CREATE TABLE muc_room_affiliation (
 );
 
 CREATE UNIQUE INDEX i_muc_room_affiliation_name_host_username ON muc_room_affiliation USING BTREE (name, host, username);
+CREATE INDEX i_muc_room_affiliation_host_username_affiliation ON muc_room_affiliation(host, username, affiliation);
 
 CREATE TABLE muc_registered (
     jid text NOT NULL,

@@ -2781,8 +2781,10 @@ find_changed_items(UJID, UAffiliation, URole,
     TAffiliation = get_affiliation(JID, StateData),
     TRole = get_role(JID, StateData),
     ServiceAf = get_service_affiliation(JID, StateData),
+    MyServiceAf = get_service_affiliation(UJID, StateData),
     CanChangeRA = case can_change_ra(UAffiliation,
 				     URole,
+                     MyServiceAf,
 				     TAffiliation,
 				     TRole, RoleOrAff, RoleOrAffValue,
 				     ServiceAf) of
@@ -2821,131 +2823,139 @@ find_changed_items(UJID, UAffiliation, URole,
 	    throw({error, xmpp:err_not_allowed(Txt, Lang)})
     end.
 
--spec can_change_ra(affiliation(), role(), affiliation(), role(),
+-spec can_change_ra(affiliation(), role(), affiliation(), affiliation(), role(),
 		    affiliation, affiliation(), affiliation()) -> boolean() | nothing | check_owner;
-		   (affiliation(), role(), affiliation(), role(),
+		   (affiliation(), role(), affiliation(), affiliation(), role(),
 		    role, role(), affiliation()) -> boolean() | nothing | check_owner.
-can_change_ra(_FAffiliation, _FRole, owner, _TRole,
+can_change_ra(_FAffiliation, _FRole, owner, _TAffiliation, _TRole,
+	      _RoleorAffiliation, _Value, owner) ->
+    %% A MUC admin can't change role or affiliation for another MUC admin
+    false;
+can_change_ra(_FAffiliation, _FRole, owner, _TAffiliation, _TRole,
+	      _RoleorAffiliation, _Value, _ServiceAf) ->
+    %% A MUC admin can change anything regardless of affiliation or role
+    true;
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, owner, _TRole,
 	      affiliation, owner, owner) ->
     %% A room owner tries to add as persistent owner a
     %% participant that is already owner because he is MUC admin
     true;
-can_change_ra(_FAffiliation, _FRole, _TAffiliation,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, _TAffiliation,
 	      _TRole, _RoleorAffiliation, _Value, owner) ->
     %% Nobody can decrease MUC admin's role/affiliation
     false;
-can_change_ra(_FAffiliation, _FRole, TAffiliation,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, TAffiliation,
 	      _TRole, affiliation, Value, _ServiceAf)
     when TAffiliation == Value ->
     nothing;
-can_change_ra(_FAffiliation, _FRole, _TAffiliation,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, _TAffiliation,
 	      TRole, role, Value, _ServiceAf)
     when TRole == Value ->
     nothing;
-can_change_ra(FAffiliation, _FRole, outcast, _TRole,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, outcast, _TRole,
 	      affiliation, none, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(FAffiliation, _FRole, outcast, _TRole,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, outcast, _TRole,
 	      affiliation, member, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(owner, _FRole, outcast, _TRole,
+can_change_ra(owner, _FRole, _MyServiceAf, outcast, _TRole,
 	      affiliation, admin, _ServiceAf) ->
     true;
-can_change_ra(owner, _FRole, outcast, _TRole,
+can_change_ra(owner, _FRole, _MyServiceAf, outcast, _TRole,
 	      affiliation, owner, _ServiceAf) ->
     true;
-can_change_ra(FAffiliation, _FRole, none, _TRole,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, none, _TRole,
 	      affiliation, outcast, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(FAffiliation, _FRole, none, _TRole,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, none, _TRole,
 	      affiliation, member, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(owner, _FRole, none, _TRole, affiliation,
+can_change_ra(owner, _FRole, _MyServiceAf, none, _TRole, affiliation,
 	      admin, _ServiceAf) ->
     true;
-can_change_ra(owner, _FRole, none, _TRole, affiliation,
+can_change_ra(owner, _FRole, _MyServiceAf, none, _TRole, affiliation,
 	      owner, _ServiceAf) ->
     true;
-can_change_ra(FAffiliation, _FRole, member, _TRole,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, member, _TRole,
 	      affiliation, outcast, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(FAffiliation, _FRole, member, _TRole,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, member, _TRole,
 	      affiliation, none, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(owner, _FRole, member, _TRole,
+can_change_ra(owner, _FRole, _MyServiceAf, member, _TRole,
 	      affiliation, admin, _ServiceAf) ->
     true;
-can_change_ra(owner, _FRole, member, _TRole,
+can_change_ra(owner, _FRole, _MyServiceAf, member, _TRole,
 	      affiliation, owner, _ServiceAf) ->
     true;
-can_change_ra(owner, _FRole, admin, _TRole, affiliation,
+can_change_ra(owner, _FRole, _MyServiceAf, admin, _TRole, affiliation,
 	      _Affiliation, _ServiceAf) ->
     true;
-can_change_ra(owner, _FRole, owner, _TRole, affiliation,
+can_change_ra(owner, _FRole, _MyServiceAf, owner, _TRole, affiliation,
 	      _Affiliation, _ServiceAf) ->
     check_owner;
-can_change_ra(_FAffiliation, _FRole, _TAffiliation,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, _TAffiliation,
 	      _TRole, affiliation, _Value, _ServiceAf) ->
     false;
-can_change_ra(_FAffiliation, moderator, _TAffiliation,
+can_change_ra(_FAffiliation, moderator, _MyServiceAf, _TAffiliation,
 	      visitor, role, none, _ServiceAf) ->
     true;
-can_change_ra(_FAffiliation, moderator, _TAffiliation,
+can_change_ra(_FAffiliation, moderator, _MyServiceAf, _TAffiliation,
 	      visitor, role, participant, _ServiceAf) ->
     true;
-can_change_ra(FAffiliation, _FRole, _TAffiliation,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, _TAffiliation,
 	      visitor, role, moderator, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(_FAffiliation, moderator, _TAffiliation,
+can_change_ra(_FAffiliation, moderator, _MyServiceAf, _TAffiliation,
 	      participant, role, none, _ServiceAf) ->
     true;
-can_change_ra(_FAffiliation, moderator, _TAffiliation,
+can_change_ra(_FAffiliation, moderator, _MyServiceAf, _TAffiliation,
 	      participant, role, visitor, _ServiceAf) ->
     true;
-can_change_ra(FAffiliation, _FRole, _TAffiliation,
+can_change_ra(FAffiliation, _FRole, _MyServiceAf, _TAffiliation,
 	      participant, role, moderator, _ServiceAf)
     when (FAffiliation == owner) or
 	   (FAffiliation == admin) ->
     true;
-can_change_ra(_FAffiliation, _FRole, owner, moderator,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, owner, moderator,
 	      role, visitor, _ServiceAf) ->
     false;
-can_change_ra(owner, _FRole, _TAffiliation, moderator,
+can_change_ra(owner, _FRole, _MyServiceAf, _TAffiliation, moderator,
 	      role, visitor, _ServiceAf) ->
     true;
-can_change_ra(_FAffiliation, _FRole, admin, moderator,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, admin, moderator,
 	      role, visitor, _ServiceAf) ->
     false;
-can_change_ra(admin, _FRole, _TAffiliation, moderator,
+can_change_ra(admin, _FRole, _MyServiceAf, _TAffiliation, moderator,
 	      role, visitor, _ServiceAf) ->
     true;
-can_change_ra(_FAffiliation, _FRole, owner, moderator,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, owner, moderator,
 	      role, participant, _ServiceAf) ->
     false;
-can_change_ra(owner, _FRole, _TAffiliation, moderator,
+can_change_ra(owner, _FRole, _MyServiceAf, _TAffiliation, moderator,
 	      role, participant, _ServiceAf) ->
     true;
-can_change_ra(_FAffiliation, _FRole, admin, moderator,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, admin, moderator,
 	      role, participant, _ServiceAf) ->
     false;
-can_change_ra(admin, _FRole, _TAffiliation, moderator,
+can_change_ra(admin, _FRole, _MyServiceAf, _TAffiliation, moderator,
 	      role, participant, _ServiceAf) ->
     true;
-can_change_ra(_FAffiliation, _FRole, _TAffiliation,
+can_change_ra(_FAffiliation, _FRole, _MyServiceAf, _TAffiliation,
 	      _TRole, role, _Value, _ServiceAf) ->
     false.
 

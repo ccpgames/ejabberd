@@ -2182,6 +2182,14 @@ is_ra_changed(JID, _IsInitialPresence = false, NewStateData, OldStateData) ->
 	    (NewRole /= OldRole) or (NewAff /= OldAff)
     end.
 
+get_eve_user_data(Who) ->
+    case mod_expiring_records:fetch({eve_user_data, Who}) of
+        {ok, Data} ->
+            Data;
+        _ ->
+            []
+    end.
+
 -spec send_new_presence1(jid(), binary(), boolean(), state(), state()) -> ok.
 send_new_presence1(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
     LNJID = jid:tolower(NJID),
@@ -2226,9 +2234,12 @@ send_new_presence1(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
 	      Pres = if Presence == undefined -> #presence{};
 			true -> Presence
 		     end,
+          Meta = #xmlel{name = <<"eve_user_data">>, attrs = get_eve_user_data(jid:to_string(jid:remove_resource(LJID)))},
+          Pres1 = xmpp:set_els(Pres, [Meta]),
 	      Packet = xmpp:set_subtag(
-			 Pres, #muc_user{items = [Item],
+			 Pres1, #muc_user{items = [Item],
 					 status_codes = StatusCodes}),
+
 	      Node1 = case is_ra_changed(NJID, IsInitialPresence, StateData, OldStateData) of
 			  true -> ?NS_MUCSUB_NODES_AFFILIATIONS;
 			  false -> ?NS_MUCSUB_NODES_PRESENCE
@@ -2284,8 +2295,10 @@ send_existing_presences1(ToJID, StateData) ->
 				 true -> Item0#muc_item{jid = FromJID};
 				 false -> Item0
 			     end,
+              Meta = #xmlel{name = <<"eve_user_data">>, attrs = get_eve_user_data(jid:to_string(jid:remove_resource(LJID)))},
+              Pres1 = xmpp:set_els(Presence, [Meta]),
 		      Packet = xmpp:set_subtag(
-				 Presence, #muc_user{items = [Item]}),
+				 Pres1, #muc_user{items = [Item]}),
 		      send_wrapped(jid:replace_resource(StateData#state.jid, FromNick),
 				   RealToJID, Packet, ?NS_MUCSUB_NODES_PRESENCE, StateData)
 	      end

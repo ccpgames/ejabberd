@@ -15,7 +15,11 @@
 %% API
 -export([start/2, stop/1, reload/3, depends/2]).
 -export([add/3, fetch/1, delete/1, size/0, trim/0, search/1]).
--export([process_local_iq/1, process_local_iq_search/1, decode_iq_subel/1]).
+-export([
+    process_local_iq/1,
+    process_local_iq_search/1,
+    decode_iq_subel/1
+]).
 -export([mod_opt_type/1]).
 
 -include("ejabberd.hrl").
@@ -162,6 +166,7 @@ delete_records([Head | Tail]) ->
 
 -spec process_local_iq(iq()) -> iq().
 process_local_iq(#iq{type=set, lang=Lang, sub_els=[Elem]} = IQ) ->
+    ?INFO_MSG("process_local_iq set", []),
     {LJID, RoomJid, Action} = extract_attributes(Elem),
     case mod_muc:find_online_room(RoomJid#jid.user, RoomJid#jid.server) of
         {ok, Pid} ->
@@ -218,6 +223,7 @@ process_local_iq(#iq{type=get, lang=Lang, sub_els=[Elem]} = IQ) ->
             xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
     end.
 
+-spec process_local_iq_search(iq()) -> iq().
 process_local_iq_search(#iq{type=get, sub_els=[Elem]} = IQ) ->
     Room = proplists:get_value(<<"room">>, Elem#xmlel.attrs),
     RoomJid = jid:from_string(Room),

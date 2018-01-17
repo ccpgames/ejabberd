@@ -34,7 +34,7 @@
 % based on EVE corporations or alliances.
 % User data is extra data that is sent along with presence notifications
 % so that EVE clients don't have to query the EVE server for this information.
-% The user data may include corp and alliance info, but we keep it separate
+% The user data may include corporation and alliance info, but we keep it separate
 % even if it means duplication as it allows us to have the user data be a
 % black box to Ejabberd - it merely passes the info along.
 
@@ -103,14 +103,14 @@ process_local_iq_eve_user_data(#iq{type=get, sub_els=[Elem]} = IQ) ->
 process_local_iq(#iq{type=set, lang=Lang, from=From, sub_els=[Elem]} = IQ) ->
     case From of
         #jid{luser = <<"admin">>} ->
-            {UserJid, CorpJid, AllianceJid} = extract_attributes(Elem),
+            {CharacterJid, CorporationJid, AllianceJid} = extract_attributes(Elem),
             % Association to last for one week. On regular servers 24 hrs
             % is enough, but local servers often run longer.
             % TODO: Make this a config value
             ExpiresAt = erlang:system_time(seconds) + 7*24*60*60,
-            ?INFO_MSG("Registering association for user ~p: ~p", [UserJid, {CorpJid, AllianceJid}]),
-            mod_expiring_records:add({association, UserJid}, {CorpJid, AllianceJid}, ExpiresAt),
-            mod_expiring_records:add({is_association, CorpJid}, ok, ExpiresAt),
+            ?INFO_MSG("Registering association for user ~p: ~p", [CharacterJid, {CorporationJid, AllianceJid}]),
+            mod_expiring_records:add({association, CharacterJid}, {CorporationJid, AllianceJid}, ExpiresAt),
+            mod_expiring_records:add({is_association, CorporationJid}, ok, ExpiresAt),
             mod_expiring_records:add({is_association, AllianceJid}, ok, ExpiresAt),
             xmpp:make_iq_result(IQ);
         _ ->
@@ -122,15 +122,15 @@ process_local_iq(#iq{type=get, lang=Lang, from=From, sub_els=[Elem]} = IQ) ->
     case From of
         #jid{luser = <<"admin">>} ->
             Who = proplists:get_value(<<"jid">>, Elem#xmlel.attrs),
-            UserJid = jid:tolower(jid:from_string(Who)),
-            case mod_expiring_records:fetch({association, UserJid}) of
+            CharacterJid = jid:tolower(jid:from_string(Who)),
+            case mod_expiring_records:fetch({association, CharacterJid}) of
                 not_found ->
                     Txt = <<"No entry">>,
                     xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang));
-                {Corp, Alliance} ->
-                    ?INFO_MSG("~p is associated with ~p and ~p", [Corp, Alliance]),
+                {Corporation, Alliance} ->
+                    ?INFO_MSG("~p is associated with ~p and ~p", [Corporation, Alliance]),
                     Attrs = [
-                        {<<"corp">>, jid:tolower(jid:to_string(Corp))},
+                        {<<"corp">>, jid:tolower(jid:to_string(Corporation))},
                         {<<"alliance">>, jid:tolower(jid:to_string(Alliance))}
                     ],
                     xmpp:make_iq_result(IQ, #xmlel{name = <<"association">>, attrs = Attrs })
@@ -143,12 +143,12 @@ process_local_iq(#iq{type=get, lang=Lang, from=From, sub_els=[Elem]} = IQ) ->
 
 extract_attributes(Elem) ->
     Who = proplists:get_value(<<"jid">>, Elem#xmlel.attrs),
-    UserJid = jid:tolower(jid:from_string(Who)),
-    Corp = proplists:get_value(<<"corp">>, Elem#xmlel.attrs),
-    CorpJid = jid:tolower(jid:from_string(Corp)),
+    CharacterJid = jid:tolower(jid:from_string(Who)),
+    Corporation = proplists:get_value(<<"corp">>, Elem#xmlel.attrs),
+    CorporationJid = jid:tolower(jid:from_string(Corporation)),
     Alliance = proplists:get_value(<<"alliance">>, Elem#xmlel.attrs),
     AllianceJid = jid:tolower(jid:from_string(Alliance)),
-    {UserJid, CorpJid, AllianceJid}.
+    {CharacterJid, CorporationJid, AllianceJid}.
 
 -spec decode_iq_subel(xmpp_element() | xmlel()) -> xmpp_element() | xmlel().
 %% Tell gen_iq_handler not to auto-decode IQ payload

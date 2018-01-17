@@ -1286,16 +1286,16 @@ get_affiliation(JID, StateData) ->
 			case get_affiliation_helper(LJID, StateData) of
 				none ->
 					LJID1 = jid:remove_resource(LJID),
-					?DEBUG("User ~p has no affiliation, checking corp and alliance", [LJID1]),
+					?DEBUG("User ~p has no affiliation, checking corporation and alliance", [LJID1]),
 					case mod_expiring_records:fetch({association, LJID1}) of
 						not_found ->
 							?DEBUG("No association info found", []),
 							none;
-						{ok, {CorpJid, AllianceJid}} ->
-							?DEBUG("Checking corp ~p", [CorpJid]),
-							case (?DICT):find(CorpJid, StateData#state.affiliations) of
+						{ok, {CorporationJid, AllianceJid}} ->
+							?DEBUG("Checking corporation ~p", [CorporationJid]),
+							case (?DICT):find(CorporationJid, StateData#state.affiliations) of
 								{ok, Affiliation} ->
-									?DEBUG("~s ~p via corp ~s", [jid:to_string(LJID1), Affiliation, jid:to_string(CorpJid)]),
+									?DEBUG("~s ~p via corporation ~s", [jid:to_string(LJID1), Affiliation, jid:to_string(CorporationJid)]),
 									Affiliation;
 								_ ->
 									?DEBUG("Checking alliance ~p", [AllianceJid]),

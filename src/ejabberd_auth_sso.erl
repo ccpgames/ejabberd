@@ -134,8 +134,7 @@ validate_user(admin, Body) ->
     Desired = dict:from_list([
         {"Scopes", "sso.generateAuthToken.v1"},
         {"TokenType", "Service"},
-        {"ClientIdentifier", "eveServer"},
-        {"ApplicationID", "46"}
+        {"ClientIdentifier", "eveServer"}
     ]),
     fields_match(Desired, Actual);
 
@@ -159,7 +158,12 @@ verify_token_on_endpoint(VerifyEndpoint, User, Token) ->
            {{_, ResponseCode, _}, _, Body}=ResultOrReason,
            case ResponseCode of
                200 ->
-                   validate_user(User, Body);
+                   case validate_user(User, Body) of
+                       true -> true;
+                       false ->
+                           ?INFO_MSG("Token is not valid: ~n~s", [Body]),
+                           false
+                   end;
                _ ->
                    ?INFO_MSG("Token is not valid: ~n~s", [Body]),
                    false

@@ -716,12 +716,30 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     SystemRoomNames = Mod:get_system_rooms(LServer, Host),
     MyRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, owner),
+    AdminRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, admin),
     OtherRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, member),
     Items = lists:flatmap(
         fun({R, T}) ->
             [#disco_item{jid = jid:make(R, Host), name = T}]
         end,
-        lists:append(lists:append(SystemRoomNames, MyRooms), OtherRooms)
+        lists:append(
+            lists:append(SystemRoomNames, MyRooms),
+            lists:append(AdminRooms, OtherRooms))
+    ),
+    {result, #disco_items{node = Node, items = Items, rsm = undefined}};
+
+iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
+  when Node == <<"adminbyme">> ->
+    ?INFO_MSG("iq_disco_items adminbyme", []),
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    MyRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, owner),
+    AdminRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, admin),
+    Items = lists:flatmap(
+        fun({R, T}) ->
+            [#disco_item{jid = jid:make(R, Host), name = T}]
+        end,
+        lists:append(MyRooms, AdminRooms)
     ),
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 

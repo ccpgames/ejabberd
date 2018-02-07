@@ -59,6 +59,7 @@ init(Host, Opts) ->
 
 store_room(LServer, Host, Name, Opts) ->
 	Title = proplists:get_value(title, Opts),
+	ComparisonKey = comparison_key_from_title(Title),
 	Affiliations = proplists:get_value(affiliations, Opts),
 
     SOpts = misc:term_to_expr(Opts),
@@ -68,7 +69,8 @@ store_room(LServer, Host, Name, Opts) ->
                    ["!name=%(Name)s",
                     "!host=%(Host)s",
                     "opts=%(SOpts)s",
-					"title=%(Title)s"]),
+					"title=%(Title)s",
+				    "comparison_key=%(ComparisonKey)s"]),
 		case Name of
 			<<"player_", _/binary>> ->
 				ejabberd_sql:sql_query_t(
@@ -95,6 +97,10 @@ store_room(LServer, Host, Name, Opts) ->
 		end
 	end,
 	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
+
+comparison_key_from_title(Title) ->
+	ComparisonKey = string:replace(string:lowercase(Title), " ", "", all),
+	ComparisonKey.
 
 restore_room(LServer, Host, Name) ->
     case catch ejabberd_sql:sql_query(
@@ -196,11 +202,12 @@ get_system_rooms(LServer, Host) ->
     end.
 
 get_rooms_by_title(LServer, Host, Name) ->
+	ComparisonKey = comparison_key_from_title(Name),
     case catch ejabberd_sql:sql_query(
                  LServer,
                  ?SQL("select @(name)s, @(title)s from muc_room"
                       " where host=%(Host)s"
-                      " and title=%(Name)s")) of
+                      " and comparison_key=%(ComparisonKey)s")) of
 	{selected, Rooms} ->
 		Rooms;
 	Err ->

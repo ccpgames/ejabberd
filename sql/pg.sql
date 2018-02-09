@@ -288,12 +288,14 @@ CREATE TABLE muc_room (
     host text NOT NULL,
     opts text NOT NULL,
     title text NOT NULL,
+    comparison_key text NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX i_muc_room_name_host ON muc_room USING btree (name, host);
 CREATE INDEX i_muc_room_host_name ON muc_room(host, name TEXT_PATTERN_OPS);
 CREATE INDEX i_muc_room_host_title ON muc_room(host, title TEXT_PATTERN_OPS);
+CREATE INDEX i_muc_room_host_comparison_key ON muc_room(host, comparison_key);
 
 CREATE TABLE muc_room_affiliation (
   name text NOT NULL,

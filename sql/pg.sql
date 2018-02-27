@@ -105,6 +105,21 @@ CREATE INDEX i_username ON archive USING btree (username);
 CREATE INDEX i_timestamp ON archive USING btree (timestamp);
 CREATE INDEX i_peer ON archive USING btree (peer);
 CREATE INDEX i_bare_peer ON archive USING btree (bare_peer);
+CREATE INDEX i_created_at ON archive USING btree (created_at);
+
+CREATE OR REPLACE FUNCTION delete_obsolete_archive_rows() RETURNS trigger AS
+$BODY$
+BEGIN
+    DELETE FROM archive where archive.created_at < (now() - INTERVAL '30 days');
+    RETURN NULL;
+END;
+$BODY$
+LANGUAGE 'plpgsql';
+
+CREATE TRIGGER trigger_delete_obsolete_archive_rows
+    AFTER INSERT on archive
+    EXECUTE PROCEDURE delete_obsolete_archive_rows();
+
 
 CREATE TABLE archive_prefs (
     username text NOT NULL PRIMARY KEY,
@@ -272,10 +287,25 @@ CREATE TABLE muc_room (
     name text NOT NULL,
     host text NOT NULL,
     opts text NOT NULL,
+    title text NOT NULL,
+    comparison_key text NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX i_muc_room_name_host ON muc_room USING btree (name, host);
+CREATE INDEX i_muc_room_host_name ON muc_room(host, name TEXT_PATTERN_OPS);
+CREATE INDEX i_muc_room_host_title ON muc_room(host, title TEXT_PATTERN_OPS);
+CREATE INDEX i_muc_room_host_comparison_key ON muc_room(host, comparison_key);
+
+CREATE TABLE muc_room_affiliation (
+  name text NOT NULL,
+  host text NOT NULL,
+  username text NOT NULL,
+  affiliation text NOT NULL
+);
+
+CREATE UNIQUE INDEX i_muc_room_affiliation_name_host_username ON muc_room_affiliation USING BTREE (name, host, username);
+CREATE INDEX i_muc_room_affiliation_host_username_affiliation ON muc_room_affiliation(host, username, affiliation);
 
 CREATE TABLE muc_registered (
     jid text NOT NULL,

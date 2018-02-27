@@ -2268,8 +2268,75 @@ send_new_presence1(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
 send_existing_presences(ToJID, StateData) ->
     case is_room_overcrowded(StateData) of
 	true -> ok;
-	false -> send_existing_presences1(ToJID, StateData)
+	false ->
+		Name = StateData#state.room,
+		case string:prefix(Name, "local") of
+            nomatch ->
+                send_existing_presences1(ToJID, StateData);
+            _ ->
+                send_existing_presences_for_all_members(ToJID, StateData)
+        end
     end.
+
+-spec send_existing_presences_for_all_members(jid(), state()) -> ok.
+send_existing_presences_for_all_members(ToJID, StateData) ->
+    LToJID = jid:tolower(ToJID),
+    {ok, #user{jid = RealToJID}} =
+        (?DICT):find(LToJID, StateData#state.users),
+
+    lists:foreach(
+        fun(FromNick) ->
+            #user{jid = FromJID, role = FromRole, last_presence = Presence} =
+                get_user_from_nick(FromNick, StateData),
+            case RealToJID of
+                FromJID -> ok;
+                _ ->
+                    LJID = case find_jid_by_nick(FromNick, StateData) of
+                               false ->
+                                   jid:make(FromNick, StateData#state.host);
+                               JID ->
+                                   JID
+                           end,
+                    FromAffiliation = get_affiliation(LJID, StateData),
+                    Item = #muc_item{affiliation = FromAffiliation, role = FromRole},
+                    Meta = #xmlel{name = <<"eve_user_data">>, attrs = get_eve_user_data(jid:to_string(jid:remove_resource(LJID)))},
+                    Pres1 = xmpp:set_els(Presence, [Meta]),
+                    Packet = xmpp:set_subtag(
+                        Pres1, #muc_user{items = [Item]}),
+                    send_wrapped(jid:replace_resource(StateData#state.jid, FromNick),
+                        RealToJID, Packet, ?NS_MUCSUB_NODES_PRESENCE, StateData)
+            end
+        end,
+        get_all_nicks(StateData)).
+
+get_user_from_nick(FromNick, StateData) ->
+    LJID = case find_jid_by_nick(FromNick, StateData) of
+               false ->
+                   jid:make(FromNick, StateData#state.host);
+               JID ->
+                   JID
+           end,
+    case (?DICT):find(jid:tolower(LJID), StateData#state.users) of
+        {ok, Value} -> Value;
+        _ ->
+            #user{jid = LJID, role = participant, last_presence = #presence{}}
+    end.
+
+get_all_nicks(StateData) ->
+    Result = (?DICT):fold(
+        fun(Key, Value, Acc) ->
+            case Value of
+                {member, _} ->
+                    {Nick, _, _} = Key,
+                    [Nick | Acc];
+                _ ->
+                    Acc
+            end
+        end,
+        [],
+        StateData#state.affiliations
+    ),
+    Result.
 
 -spec send_existing_presences1(jid(), state()) -> ok.
 send_existing_presences1(ToJID, StateData) ->

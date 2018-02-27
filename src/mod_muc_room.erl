@@ -3727,6 +3727,22 @@ iq_disco_info_extras(Lang, StateData) ->
 process_iq_disco_items(_From, #iq{type = set, lang = Lang}, _StateData) ->
     Txt = <<"Value 'set' of 'type' attribute is not allowed">>,
     {error, xmpp:err_not_allowed(Txt, Lang)};
+process_iq_disco_items(From, #iq{type = get, sub_els = [#disco_items{node = Node}]}, StateData)
+    when Node == <<"norole">> ->
+        case (StateData#state.config)#config.public_list of
+          true ->
+          {result, get_mucroom_disco_items_no_role(StateData)};
+          _ ->
+          case is_occupant_or_admin(From, StateData) of
+            true ->
+            {result, get_mucroom_disco_items_no_role(StateData)};
+            _ ->
+            %% If the list of occupants is private,
+            %% the room MUST return an empty <query/> element
+            %% (http://xmpp.org/extensions/xep-0045.html#disco-roomitems)
+            {result, #disco_items{}}
+          end
+        end;
 process_iq_disco_items(From, #iq{type = get}, StateData) ->
     case (StateData#state.config)#config.public_list of
       true ->
@@ -3956,6 +3972,35 @@ get_mucroom_disco_items(StateData) ->
 				  name = Nick}
 	      end,
 	      (?DICT):to_list(StateData#state.users)),
+    #disco_items{items = Items}.
+
+-spec get_mucroom_disco_items_no_role(state()) -> disco_items().
+get_mucroom_disco_items_no_role(StateData) ->
+    Items = lists:filtermap(
+	      fun({LJID, Affiliation}) ->
+              case Affiliation of
+                  {member, _} ->
+					  JID = jid:make(LJID),
+					  Nick = JID#jid.user,
+					  case (?DICT):is_key(Nick, StateData#state.nicks) of
+						  false ->
+							  {true, #disco_item{jid = jid:make(StateData#state.room,
+										 StateData#state.host,
+										 Nick),
+								  name = Nick}};
+						  true -> false
+					  end;
+                  _ -> false
+              end
+	      end,
+	      (?DICT):to_list(StateData#state.affiliations)),
+    ?INFO_MSG("Members with no role in ~s: ~p", [
+		StateData#state.room,
+		lists:map(
+			fun(#disco_item{jid = JID}) ->
+				JID#jid.user
+			end,
+			Items)]),
     #disco_items{items = Items}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

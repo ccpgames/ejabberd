@@ -744,6 +744,26 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 
 
+iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, <<"ownedby/", Name/binary>> = Node, RSM) ->
+    AccessAdmin = gen_mod:get_module_opt(ServerHost, mod_muc, access_admin, none),
+    case acl:match_rule(ServerHost, AccessAdmin, From) of
+        allow ->
+            JID = jid:make(Name, ServerHost),
+            LServer = jid:nameprep(ServerHost),
+            Mod = gen_mod:db_mod(LServer, ?MODULE),
+            MyRooms = Mod:get_rooms_by_affiliation(LServer, Host, JID, owner),
+            Items = lists:flatmap(
+                fun({R, T}) ->
+                    [#disco_item{jid = jid:make(R, Host), name = T}]
+                end,
+                MyRooms
+            );
+        _ ->
+            ?INFO_MSG("iq_disco_items ownedby: ~p not an admin", [From]),
+            Items = []
+    end,
+    {result, #disco_items{node = Node, items = Items, rsm = undefined}};
+
 iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, <<"byname/", Name/binary>> = Node, RSM) ->
     ?INFO_MSG("iq_disco_items byname ~s", [Name]),
     LServer = jid:nameprep(ServerHost),

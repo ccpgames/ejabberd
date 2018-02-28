@@ -3782,10 +3782,24 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 						 name = get_title(StateData)}],
 			 features = Feats}}.
 
+is_room_category(Category, StateData) ->
+	Name = StateData#state.room,
+	case string:prefix(Name, Category) of
+		nomatch -> false;
+		_ -> true
+	end.
+
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->
+	case is_room_category("wormhole", StateData) of
+		false ->
+			Occupants = ?DICT:size(StateData#state.users);
+		_ ->
+			Occupants = 0
+	end,
+
     Fs = [{description, (StateData#state.config)#config.description},
-	  {occupants, ?DICT:size(StateData#state.users)}],
+	  {occupants, Occupants}],
     #xdata{type = result,
 	   fields = muc_roominfo:encode(Fs, Lang)}.
 
@@ -3794,28 +3808,13 @@ iq_disco_info_extras(Lang, StateData) ->
 process_iq_disco_items(_From, #iq{type = set, lang = Lang}, _StateData) ->
     Txt = <<"Value 'set' of 'type' attribute is not allowed">>,
     {error, xmpp:err_not_allowed(Txt, Lang)};
-process_iq_disco_items(From, #iq{type = get, sub_els = [#disco_items{node = Node}]}, StateData)
-    when Node == <<"norole">> ->
-        case (StateData#state.config)#config.public_list of
-          true ->
-          {result, get_mucroom_disco_items_no_role(StateData)};
-          _ ->
-          case is_occupant_or_admin(From, StateData) of
-            true ->
-            {result, get_mucroom_disco_items_no_role(StateData)};
-            _ ->
-            %% If the list of occupants is private,
-            %% the room MUST return an empty <query/> element
-            %% (http://xmpp.org/extensions/xep-0045.html#disco-roomitems)
-            {result, #disco_items{}}
-          end
-        end;
 process_iq_disco_items(From, #iq{type = get}, StateData) ->
     case (StateData#state.config)#config.public_list of
       true ->
 	  {result, get_mucroom_disco_items(StateData)};
       _ ->
-	  case is_occupant_or_admin(From, StateData) of
+	  case is_occupant_or_admin(From, StateData)
+		  and not is_room_category("wormhole", StateData) of
 	    true ->
 		{result, get_mucroom_disco_items(StateData)};
 	    _ ->

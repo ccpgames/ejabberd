@@ -2268,8 +2268,75 @@ send_new_presence1(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
 send_existing_presences(ToJID, StateData) ->
     case is_room_overcrowded(StateData) of
 	true -> ok;
-	false -> send_existing_presences1(ToJID, StateData)
+	false ->
+		Name = StateData#state.room,
+		case string:prefix(Name, "local") of
+            nomatch ->
+                send_existing_presences1(ToJID, StateData);
+            _ ->
+                send_existing_presences_for_all_members(ToJID, StateData)
+        end
     end.
+
+-spec send_existing_presences_for_all_members(jid(), state()) -> ok.
+send_existing_presences_for_all_members(ToJID, StateData) ->
+    LToJID = jid:tolower(ToJID),
+    {ok, #user{jid = RealToJID}} =
+        (?DICT):find(LToJID, StateData#state.users),
+
+    lists:foreach(
+        fun(FromNick) ->
+            #user{jid = FromJID, role = FromRole, last_presence = Presence} =
+                get_user_from_nick(FromNick, StateData),
+            case RealToJID of
+                FromJID -> ok;
+                _ ->
+                    LJID = case find_jid_by_nick(FromNick, StateData) of
+                               false ->
+                                   jid:make(FromNick, StateData#state.host);
+                               JID ->
+                                   JID
+                           end,
+                    FromAffiliation = get_affiliation(LJID, StateData),
+                    Item = #muc_item{affiliation = FromAffiliation, role = FromRole},
+                    Meta = #xmlel{name = <<"eve_user_data">>, attrs = get_eve_user_data(jid:to_string(jid:remove_resource(LJID)))},
+                    Pres1 = xmpp:set_els(Presence, [Meta]),
+                    Packet = xmpp:set_subtag(
+                        Pres1, #muc_user{items = [Item]}),
+                    send_wrapped(jid:replace_resource(StateData#state.jid, FromNick),
+                        RealToJID, Packet, ?NS_MUCSUB_NODES_PRESENCE, StateData)
+            end
+        end,
+        get_all_nicks(StateData)).
+
+get_user_from_nick(FromNick, StateData) ->
+    LJID = case find_jid_by_nick(FromNick, StateData) of
+               false ->
+                   jid:make(FromNick, StateData#state.host);
+               JID ->
+                   JID
+           end,
+    case (?DICT):find(jid:tolower(LJID), StateData#state.users) of
+        {ok, Value} -> Value;
+        _ ->
+            #user{jid = LJID, role = participant, last_presence = #presence{}}
+    end.
+
+get_all_nicks(StateData) ->
+    Result = (?DICT):fold(
+        fun(Key, Value, Acc) ->
+            case Value of
+                {member, _} ->
+                    {Nick, _, _} = Key,
+                    [Nick | Acc];
+                _ ->
+                    Acc
+            end
+        end,
+        [],
+        StateData#state.affiliations
+    ),
+    Result.
 
 -spec send_existing_presences1(jid(), state()) -> ok.
 send_existing_presences1(ToJID, StateData) ->
@@ -3715,10 +3782,24 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 						 name = get_title(StateData)}],
 			 features = Feats}}.
 
+is_room_category(Category, StateData) ->
+	Name = StateData#state.room,
+	case string:prefix(Name, Category) of
+		nomatch -> false;
+		_ -> true
+	end.
+
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->
+	case is_room_category("wormhole", StateData) of
+		false ->
+			Occupants = ?DICT:size(StateData#state.users);
+		_ ->
+			Occupants = 0
+	end,
+
     Fs = [{description, (StateData#state.config)#config.description},
-	  {occupants, ?DICT:size(StateData#state.users)}],
+	  {occupants, Occupants}],
     #xdata{type = result,
 	   fields = muc_roominfo:encode(Fs, Lang)}.
 
@@ -3732,7 +3813,8 @@ process_iq_disco_items(From, #iq{type = get}, StateData) ->
       true ->
 	  {result, get_mucroom_disco_items(StateData)};
       _ ->
-	  case is_occupant_or_admin(From, StateData) of
+	  case is_occupant_or_admin(From, StateData)
+		  and not is_room_category("wormhole", StateData) of
 	    true ->
 		{result, get_mucroom_disco_items(StateData)};
 	    _ ->
@@ -3956,6 +4038,35 @@ get_mucroom_disco_items(StateData) ->
 				  name = Nick}
 	      end,
 	      (?DICT):to_list(StateData#state.users)),
+    #disco_items{items = Items}.
+
+-spec get_mucroom_disco_items_no_role(state()) -> disco_items().
+get_mucroom_disco_items_no_role(StateData) ->
+    Items = lists:filtermap(
+	      fun({LJID, Affiliation}) ->
+              case Affiliation of
+                  {member, _} ->
+					  JID = jid:make(LJID),
+					  Nick = JID#jid.user,
+					  case (?DICT):is_key(Nick, StateData#state.nicks) of
+						  false ->
+							  {true, #disco_item{jid = jid:make(StateData#state.room,
+										 StateData#state.host,
+										 Nick),
+								  name = Nick}};
+						  true -> false
+					  end;
+                  _ -> false
+              end
+	      end,
+	      (?DICT):to_list(StateData#state.affiliations)),
+    ?INFO_MSG("Members with no role in ~s: ~p", [
+		StateData#state.room,
+		lists:map(
+			fun(#disco_item{jid = JID}) ->
+				JID#jid.user
+			end,
+			Items)]),
     #disco_items{items = Items}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

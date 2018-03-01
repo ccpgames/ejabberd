@@ -2269,11 +2269,10 @@ send_existing_presences(ToJID, StateData) ->
     case is_room_overcrowded(StateData) of
 	true -> ok;
 	false ->
-		Name = StateData#state.room,
-		case string:prefix(Name, "local") of
-            nomatch ->
+		case is_room_category("local", StateData) of
+            false ->
                 send_existing_presences1(ToJID, StateData);
-            _ ->
+            true ->
                 send_existing_presences_for_all_members(ToJID, StateData)
         end
     end.
@@ -3784,10 +3783,15 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 
 is_room_category(Category, StateData) ->
 	Name = StateData#state.room,
-	case string:prefix(Name, Category) of
-		nomatch -> false;
-		_ -> true
-	end.
+	Result = case Name of
+        <<Category, _Rest/binary>> ->
+            true;
+		_ ->
+            false
+	end,
+    ?INFO_MSG("is_room_category ~s ~s ~p", [Name, Category, Result]),
+    Result.
+
 
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->

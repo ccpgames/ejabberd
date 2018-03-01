@@ -3187,6 +3187,7 @@ process_iq_owner(From, #iq{type = set, lang = Lang,
 			    case is_allowed_log_change(Options, StateData, From) andalso
 				is_allowed_persistent_change(Options, StateData, From) andalso
 				is_allowed_room_name_desc_limits(Options, StateData) andalso
+				is_allowed_room_name_not_duplicate(Options, StateData) andalso
 				is_password_settings_correct(Options, StateData) of
 				true ->
 				    set_config(Options, StateData, Lang);
@@ -3273,6 +3274,16 @@ is_allowed_room_name_desc_limits(Options, StateData) ->
 		    infinity),
     (byte_size(RoomName) =< MaxRoomName)
 	andalso (byte_size(RoomDesc) =< MaxRoomDesc).
+
+%% Check if a room with the same display name already exists
+-spec is_allowed_room_name_not_duplicate(muc_roomconfig:result(), state()) -> boolean().
+is_allowed_room_name_not_duplicate(Options, StateData) ->
+    RoomName = proplists:get_value(roomname, Options, <<"">>),
+    mod_muc:can_use_room_name(
+        StateData#state.server_host,
+        StateData#state.host,
+        RoomName
+    ).
 
 %% Return false if:
 %% "the password for a password-protected room is blank"
@@ -3789,7 +3800,6 @@ is_room_category(Category, StateData) ->
 		_ ->
             false
 	end,
-    ?INFO_MSG("is_room_category ~s ~s ~p", [Name, Category, Result]),
     Result.
 
 

@@ -63,7 +63,9 @@
 	 unregister_online_user/4,
 	 count_online_rooms_by_user/3,
 	 get_online_rooms_by_user/3,
-	 can_use_nick/4]).
+	 can_use_nick/4,
+     can_use_room_name/3]
+).
 
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3,
@@ -91,6 +93,7 @@
 -callback restore_room(binary(), binary(), binary()) -> muc_room_opts() | error.
 -callback forget_room(binary(), binary(), binary()) -> {atomic, any()}.
 -callback can_use_nick(binary(), binary(), jid(), binary()) -> boolean().
+-callback can_use_room_name(binary(), binary(), binary()) -> boolean().
 -callback get_rooms(binary(), binary()) -> [#muc_room{}].
 -callback get_nick(binary(), binary(), jid()) -> binary() | error.
 -callback set_nick(binary(), binary(), jid(), binary()) -> {atomic, ok | false}.
@@ -176,6 +179,11 @@ can_use_nick(ServerHost, Host, JID, Nick) ->
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     Mod:can_use_nick(LServer, Host, JID, Nick).
+
+can_use_room_name(ServerHost, Host, Name) ->
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    Mod:can_use_room_name(LServer, Host, Name).
 
 -spec find_online_room(binary(), binary()) -> {ok, pid()} | error.
 find_online_room(Room, Host) ->

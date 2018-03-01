@@ -100,8 +100,10 @@ store_room(LServer, Host, Name, Opts) ->
 	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
 
 comparison_key_from_title(Title) ->
-	ComparisonKey = string:replace(string:lowercase(Title), " ", "", all),
-	ComparisonKey.
+	LowerCase = string:to_lower(binary_to_list(Title)),
+	Tokens = string:tokens(LowerCase, " "),
+	ComparisonKey = string:join(Tokens, ""),
+	list_to_binary(ComparisonKey).
 
 restore_room(LServer, Host, Name) ->
     case catch ejabberd_sql:sql_query(

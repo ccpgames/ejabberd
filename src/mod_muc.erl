@@ -227,6 +227,12 @@ get_online_rooms_by_user(ServerHost, LUser, LServer) ->
     RMod = gen_mod:ram_db_mod(ServerHost, ?MODULE),
     RMod:get_online_rooms_by_user(ServerHost, LUser, LServer).
 
+-spec get_room_title(binary(), binary(), binary()) -> binary().
+get_room_title(ServerHost, Host, Room)->
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    Mod:get_room_title(LServer, Host, Room).
+
 %%====================================================================
 %% gen_server callbacks
 %%====================================================================
@@ -542,6 +548,16 @@ process_disco_info(#iq{type = get, to = To, lang = Lang,
       IQ, #disco_info{features = Features,
 		      identities = [Identity],
 		      xdata = X});
+process_disco_info(#iq{type = get, to = To, lang = Lang,
+		       sub_els = [#disco_info{node = Node}]} = IQ) ->
+    Host = To#jid.lserver,
+    ServerHost = ejabberd_router:host_of_route(Host),
+    Name = get_room_title(ServerHost, Host, Node),
+    Identity = #identity{category = <<"conference">>,
+			 type = <<"text">>,
+			 name = Name},
+    xmpp:make_iq_result(
+      IQ, #disco_info{identities = [Identity]});
 process_disco_info(#iq{type = get, lang = Lang,
 		       sub_els = [#disco_info{}]} = IQ) ->
     xmpp:make_error(IQ, xmpp:err_item_not_found(<<"Node not found">>, Lang));

@@ -39,7 +39,8 @@
 	 count_online_rooms_by_user/3, get_online_rooms_by_user/3]).
 -export([set_affiliation/6, set_affiliations/4, get_affiliation/5,
 	 get_affiliations/3, search_affiliation/4]).
--export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4]).
+-export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4,
+     get_room_title/3]).
 
 -include("jid.hrl").
 -include("mod_muc.hrl").
@@ -154,6 +155,18 @@ get_rooms(LServer, Host) ->
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []
+    end.
+
+get_room_title(LServer, Host, Room) ->
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(title)s from muc_room"
+                      " where host=%(Host)s"
+                      " and name=%(Room)s")) of
+    {selected, [{Title}]} ->
+        Title;
+	_ ->
+        <<"">>
     end.
 
 get_rooms_by_affiliation(LServer, Host, JID, Affiliation) ->

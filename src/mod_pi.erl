@@ -141,15 +141,19 @@ get_replacewords_from_ets() ->
 fetch_replacewords(Host) ->
     Replace_EndPoint = ejabberd_config:get_option({bannedwords_replace_endpoint, Host}, <<"http://10.3.20.61:8000/banned_words/replaceword/">>),
     ?DEBUG("Fetching replacement words from ~n~s", [Replace_EndPoint]),
-    {Status, {Err, _, Res}} = httpc:request(binary_to_list(Replace_EndPoint)),
-    {_, ErrCode, _} = Err,
-
-    case ErrCode of
-        200 ->
-            {Response} = jiffy:decode(Res),
-	    {RepList} = proplists:get_value(<<"result">>, Response),
-            RepWords = proplists:get_value(<<"replace">>, RepList),
-	    ets:insert(bw_replacewords, {<<"ReplaceWords">>, RepWords});
+    {Status, ResultOrReason} = httpc:request(binary_to_list(Replace_EndPoint)),
+    case Status of
+	ok ->
+	    {{_, ResponseCode, _}, _, Body} = ResultOrReason,
+    	    case ResponseCode of
+        	200 ->
+            	    {Response} = jiffy:decode(Body),
+	    	    {RepList} = proplists:get_value(<<"result">>, Response),
+            	    RepWords = proplists:get_value(<<"replace">>, RepList),
+	    	    ets:insert(bw_replacewords, {<<"ReplaceWords">>, RepWords});
+		_ ->
+		    ?ERROR_MSG("Failed to fetch replacement, ~n~s", [Body])
+	    end;
 	_ ->
 	    ?ERROR_MSG("Error connecting to ~s to fetch replacement ~n~w", [Replace_EndPoint, Status])
     end.
@@ -159,18 +163,23 @@ fetch_regex(Host) ->
     Regexes_EndPoint = ejabberd_config:get_option({bannedwords_regex_endpoint, Host}, <<"http://10.3.20.61:8000/banned_words/regexes/">>),
     ?DEBUG("Fetching Regexes from ~n~s", [Regexes_EndPoint]),
     
-    {Status, {Err, _, Res}} = httpc:request(binary_to_list(Regexes_EndPoint)),
-    {_, ErrCode, _} = Err,	
-    case ErrCode of
-	    200 ->
-	        {Response} = jiffy:decode(Res),
-		RegexList = proplists:get_value(<<"result">>, Response),
-		NewHashList = process_regex_list(RegexList),
-                PL_IN_ETS = get_hashlist_from_ets(),
-		remove_deleted_pattern_from_ets(PL_IN_ETS, NewHashList);	
-	    _ ->
-	        ?ERROR_MSG("Error connecting to ~s to fetch regex~n~w", [Regexes_EndPoint, Status]), 
-	        Err
+    {Status, ResultOrReason} = httpc:request(binary_to_list(Regexes_EndPoint)),
+    case Status of
+	ok ->
+	    {{_, ResponseCode, _}, _, Body} = ResultOrReason,	
+            case ResponseCode of
+	        200 ->
+	            {Response} = jiffy:decode(Body),
+		    RegexList = proplists:get_value(<<"result">>, Response),
+		    NewHashList = process_regex_list(RegexList),
+                    PL_IN_ETS = get_hashlist_from_ets(),
+		    remove_deleted_pattern_from_ets(PL_IN_ETS, NewHashList);	
+	        _ ->
+	            ?ERROR_MSG("Error failed fetch regex~n~s", [Body]), 
+	            ResultOrReason
+	    end;
+	_ ->
+	    ?ERROR_MSG("Error connecting to ~s to fetch regex~n~w", [Regexes_EndPoint, Status])
 	end.
 
 %% run through all the re pattern for words check

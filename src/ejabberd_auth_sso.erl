@@ -141,7 +141,6 @@ validate_user(admin, Body) ->
 validate_user(User, Body) ->
     Actual = parse_simple_json(Body),
     Desired = dict:from_list([
-        {"Scopes", "sso.generateAuthToken.v1"},
         {"CharacterID", binary_to_list(User)}
     ]),
     fields_match(Desired, Actual).

@@ -206,17 +206,11 @@ get_system_rooms(LServer, Host) ->
 	Filter = "system%",
     case catch ejabberd_sql:sql_query(
                  LServer,
-                 ?SQL("select @(name)s from muc_room"
+                 ?SQL("select @(name)s, @(title)s from muc_room"
                       " where host=%(Host)s"
                       " and name like %(Filter)s")) of
 	{selected, Rooms} ->
-        RoomsWithNames = lists:flatmap(
-            fun({R}) ->
-				[{R, R}]
-            end,
-            Rooms
-        ),
-	    RoomsWithNames;
+		Rooms;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []

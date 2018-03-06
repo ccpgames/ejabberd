@@ -141,10 +141,22 @@ validate_user(admin, Body) ->
 validate_user(User, Body) ->
     Actual = parse_simple_json(Body),
     Desired = dict:from_list([
+        {"Scopes", ""},
         {"TokenType", "Character"},
         {"CharacterID", binary_to_list(User)}
     ]),
-    fields_match(Desired, Actual).
+    case fields_match(Desired, Actual) of
+        true ->
+            %% Make sure UserID exists and is not empty
+            case dict:find("UserID", Actual) of
+                {ok, UserId} ->
+                    true;
+                _ ->
+                    false
+            end;
+        false ->
+            false
+    end.
 
 
 verify_token_on_endpoint(undefined, _User, _Token) ->

@@ -175,10 +175,15 @@ forget_room(ServerHost, Host, Name) ->
     Mod:forget_room(LServer, Host, Name).
 
 can_use_nick(_ServerHost, _Host, _JID, <<"">>) -> false;
-can_use_nick(ServerHost, Host, JID, Nick) ->
-    LServer = jid:nameprep(ServerHost),
-    Mod = gen_mod:db_mod(LServer, ?MODULE),
-    Mod:can_use_nick(LServer, Host, JID, Nick).
+can_use_nick(_ServerHost, _Host, JID, Nick) ->
+    %% Enforce nick name to match user name
+    User = JID#jid.user,
+    case Nick of
+        User -> true;
+        _ ->
+            ?INFO_MSG("can_use_nick ~s ~s", [User, Nick]),
+            false
+    end.
 
 can_use_room_name(ServerHost, Host, Name) ->
     LServer = jid:nameprep(ServerHost),

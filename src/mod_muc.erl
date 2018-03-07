@@ -43,6 +43,7 @@
 	 forget_room/3,
 	 create_room/5,
 	 shutdown_rooms/1,
+     purge_session_rooms/1,
 	 process_disco_info/1,
 	 process_disco_items/1,
 	 process_vcard/1,
@@ -75,6 +76,7 @@
 -include("logger.hrl").
 -include("xmpp.hrl").
 -include("mod_muc.hrl").
+
 
 -record(state,
 	{hosts = [] :: [binary()],
@@ -137,6 +139,30 @@ shutdown_rooms(Host) ->
 	      [Pid];
 	 (_) ->
 	      []
+      end, Rooms).
+
+is_session_room(<<"local_", _/binary>>) ->
+    true;
+is_session_room(<<"wormhole_", _/binary>>) ->
+    true;
+is_session_room(_) ->
+    false.
+
+purge_session_rooms(Host) ->
+    ?INFO_MSG("purge_session_rooms ~s", [Host]),
+    RMod = gen_mod:ram_db_mod(Host, ?MODULE),
+    MyHost = gen_mod:get_module_opt_host(Host, mod_muc,
+					 <<"conference.@HOST@">>),
+    Rooms = RMod:get_online_rooms(Host, MyHost, undefined),
+    lists:foreach(
+      fun({Name, _, Pid}) ->
+          case is_session_room(Name) of
+              true ->
+                  ?INFO_MSG("purge_non_admins ~s", [Name]),
+        	      Pid ! purge_non_admins;
+              _ ->
+                  ok
+          end
       end, Rooms).
 
 %% This function is called by a room in three situations:

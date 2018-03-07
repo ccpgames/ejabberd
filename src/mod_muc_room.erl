@@ -668,6 +668,10 @@ handle_info({captcha_failed, From}, normal_state,
 		 _ -> StateData
 	       end,
     {next_state, normal_state, NewState};
+handle_info(purge_non_admins, StateName, StateData) ->
+	?INFO_MSG("~s received purge_non_admins", [StateData#state.room]),
+	NewSD = remove_nonadmins(StateData),
+    {next_state, StateName, NewSD};
 handle_info(shutdown, _StateName, StateData) ->
     {stop, shutdown, StateData};
 handle_info(_Info, StateName, StateData) ->
@@ -2311,7 +2315,7 @@ send_existing_presences_for_all_members(ToJID, StateData) ->
 get_user_from_nick(FromNick, StateData) ->
     LJID = case find_jid_by_nick(FromNick, StateData) of
                false ->
-                   jid:make(FromNick, StateData#state.host);
+                   jid:make(FromNick, StateData#state.server_host);
                JID ->
                    JID
            end,
@@ -3535,6 +3539,29 @@ remove_nonmembers(StateData) ->
 			end
 		end,
 		StateData, (?DICT):to_list(get_users_and_subscribers(StateData))).
+
+-spec remove_nonadmins(state()) -> state().
+remove_nonadmins(StateData) ->
+    NewSD = lists:foldl(
+		fun(Nick, SD) ->
+            #user{jid = JID} = get_user_from_nick(Nick, SD),
+			Affiliation = get_affiliation(JID, SD),
+			case Affiliation of
+				owner ->
+					SD;
+				admin ->
+					SD;
+				_ ->
+					?INFO_MSG("Removing ~p from ~s : ~p", [JID, SD#state.room, SD#state.affiliations]),
+					SD2 = set_affiliation(JID, none, SD),
+					catch send_kickban_presence(undefined, JID, <<"">>, 322, SD2),
+					set_role(JID, none, SD2)
+			end
+		end,
+		StateData,
+		get_all_nicks(StateData)),
+	NewSD.
+
 
 -spec set_opts([{atom(), any()}], state()) -> state().
 set_opts([], StateData) -> StateData;

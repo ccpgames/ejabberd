@@ -103,11 +103,13 @@ process_local_iq_eve_user_data(#iq{type=get, sub_els=[Elem]} = IQ) ->
     Key = {eve_user_data, Who},
     case mod_expiring_records:fetch(Key) of
         {ok, Data} ->
-            ?INFO_MSG("EVE user data for ~s: ~p", [Who, Data]);
+            ?INFO_MSG("EVE user data for ~s: ~p", [Who, Data]),
+            xmpp:make_iq_result(IQ, #xmlel{name = <<"eve_user_data">>, attrs = Data });
         _ ->
-            ?INFO_MSG("No EVE user data found for ~s", [Who])
-    end,
-    xmpp:make_iq_result(IQ).
+            ?INFO_MSG("No EVE user data found for ~s", [Who]),
+            xmpp:make_iq_result(IQ)
+    end.
+
 
 -spec process_local_iq(iq()) -> iq().
 process_local_iq(#iq{type=set, lang=Lang, from=From, sub_els=[Elem]} = IQ) ->

@@ -3388,6 +3388,7 @@ get_config(Lang, StateData, From) ->
 -spec set_config(muc_roomconfig:result(), state(), binary()) ->
 			{error, stanza_error()} | {result, undefined, state()}.
 set_config(Options, StateData, Lang) ->
+	?INFO_MSG("set_config ~s ~p", [StateData#state.room, Options]),
     try
 	#config{} = Config = set_config(Options, StateData#state.config,
 					StateData#state.server_host, Lang),
@@ -3465,6 +3466,17 @@ set_config(Opts, Config, ServerHost, Lang) ->
 	      end
       end, Config, Opts).
 
+-spec reset_to_default_roles(state()) -> state().
+reset_to_default_roles(StateData) ->
+	lists:foldl(
+		fun({LJID, _}, SD) ->
+			Affiliation = get_affiliation(LJID, SD),
+			DefaultRole = get_default_role(Affiliation, LJID, SD),
+			set_role(LJID, DefaultRole, SD)
+		end,
+		StateData,
+		(?DICT):to_list(StateData#state.users)).
+
 -spec change_config(#config{}, state()) -> {result, undefined, state()}.
 change_config(Config, StateData) ->
     send_config_change_info(Config, StateData),
@@ -3480,13 +3492,14 @@ change_config(Config, StateData) ->
 			      NSD#state.host, NSD#state.room);
       {false, false} -> ok
     end,
-    case {(StateData#state.config)#config.members_only,
+    NSD2 = case {(StateData#state.config)#config.members_only,
 	  Config#config.members_only}
 	of
-      {false, true} ->
-	  NSD1 = remove_nonmembers(NSD), {result, undefined, NSD1};
-      _ -> {result, undefined, NSD}
-    end.
+      {false, true} -> remove_nonmembers(NSD);
+      _ -> NSD
+    end,
+	NSD3 = reset_to_default_roles(NSD2),
+	{result, undefined, NSD3}.
 
 -spec send_config_change_info(#config{}, state()) -> ok.
 send_config_change_info(Config, #state{config = Config}) -> ok;

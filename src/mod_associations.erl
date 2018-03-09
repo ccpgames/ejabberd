@@ -19,6 +19,7 @@
 -export([
     process_local_iq/1,
     process_local_iq_eve_user_data/1,
+    process_purge_session_channels/1,
     decode_iq_subel/1
 ]).
 -export([mod_opt_type/1]).
@@ -29,6 +30,7 @@
 
 -define(NS_ASSOCIATIONS, <<"urn:xmpp:associations">>).
 -define(NS_EVE_USER_DATA, <<"urn:xmpp:eve_user_data">>).
+-define(NS_MUC_PURGE_SESSION_CHANNELS, <<"urn:xmpp:purge_session_channels">>).
 
 % Associations are used to determine access to rooms, to allow membership
 % based on EVE corporations or alliances.
@@ -54,9 +56,17 @@ start(Host, Opts) ->
         ?NS_ASSOCIATIONS,
         ?MODULE,
         process_local_iq,
+        IQDisc),
+    gen_iq_handler:add_iq_handler(
+        ejabberd_local,
+        Host,
+        ?NS_MUC_PURGE_SESSION_CHANNELS,
+        ?MODULE,
+        process_purge_session_channels,
         IQDisc).
 
 stop(Host) ->
+    gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_MUC_PURGE_SESSION_CHANNELS),
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_ASSOCIATIONS),
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_EVE_USER_DATA),
     ok.
@@ -93,11 +103,13 @@ process_local_iq_eve_user_data(#iq{type=get, sub_els=[Elem]} = IQ) ->
     Key = {eve_user_data, Who},
     case mod_expiring_records:fetch(Key) of
         {ok, Data} ->
-            ?INFO_MSG("EVE user data for ~s: ~p", [Who, Data]);
+            ?INFO_MSG("EVE user data for ~s: ~p", [Who, Data]),
+            xmpp:make_iq_result(IQ, #xmlel{name = <<"eve_user_data">>, attrs = Data });
         _ ->
-            ?INFO_MSG("No EVE user data found for ~s", [Who])
-    end,
-    xmpp:make_iq_result(IQ).
+            ?INFO_MSG("No EVE user data found for ~s", [Who]),
+            xmpp:make_iq_result(IQ)
+    end.
+
 
 -spec process_local_iq(iq()) -> iq().
 process_local_iq(#iq{type=set, lang=Lang, from=From, sub_els=[Elem]} = IQ) ->
@@ -139,6 +151,25 @@ process_local_iq(#iq{type=get, lang=Lang, from=From, sub_els=[Elem]} = IQ) ->
             Txt = <<"Only admin can get associations">>,
             xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
 
+    end.
+
+-spec process_purge_session_channels(iq()) -> iq().
+process_purge_session_channels(#iq{type = get, lang = Lang} = IQ) ->
+    Txt = <<"Value 'get' of 'type' attribute is not allowed">>,
+    xmpp:make_error(IQ, xmpp:err_not_allowed(Txt, Lang));
+process_purge_session_channels(#iq{from = From, to = To, type = set, lang = Lang} = IQ) ->
+    Host = To#jid.lserver,
+    ServerHost = ejabberd_router:host_of_route(Host),
+    AccessAdmin = gen_mod:get_module_opt(ServerHost, mod_muc, access_admin, none),
+    case acl:match_rule(ServerHost, AccessAdmin, From) of
+        allow ->
+            ?INFO_MSG("process_purge_session_channels", []),
+            mod_muc:purge_session_rooms(Host),
+            xmpp:make_iq_result(IQ);
+        _ ->
+            ?INFO_MSG("process_purge_session_channels only allowed by admin", []),
+            Txt = <<"Only admin can purge session channels">>,
+            xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang))
     end.
 
 extract_attributes(Elem) ->

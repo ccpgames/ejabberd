@@ -31,7 +31,7 @@
 
 %% API
 -export([init/2, store_room/4, restore_room/3, forget_room/3,
-	 can_use_nick/4, get_rooms/2, get_nick/3, set_nick/4,
+	 can_use_nick/4, can_use_room_name/3, get_rooms/2, get_nick/3, set_nick/4,
 	 import/3, export/1]).
 -export([register_online_room/4, unregister_online_room/4, find_online_room/3,
 	 get_online_rooms/3, count_online_rooms/2, rsm_supported/0,
@@ -39,7 +39,8 @@
 	 count_online_rooms_by_user/3, get_online_rooms_by_user/3]).
 -export([set_affiliation/6, set_affiliations/4, get_affiliation/5,
 	 get_affiliations/3, search_affiliation/4]).
--export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4]).
+-export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4,
+     get_room_title/3]).
 
 -include("jid.hrl").
 -include("mod_muc.hrl").
@@ -99,8 +100,10 @@ store_room(LServer, Host, Name, Opts) ->
 	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
 
 comparison_key_from_title(Title) ->
-	ComparisonKey = string:replace(string:lowercase(Title), " ", "", all),
-	ComparisonKey.
+	LowerCase = string:to_lower(binary_to_list(Title)),
+	Tokens = string:tokens(LowerCase, " "),
+	ComparisonKey = string:join(Tokens, ""),
+	list_to_binary(ComparisonKey).
 
 restore_room(LServer, Host, Name) ->
     case catch ejabberd_sql:sql_query(
@@ -133,6 +136,12 @@ can_use_nick(LServer, Host, JID, Nick) ->
 	_ -> true
     end.
 
+can_use_room_name(LServer, Host, Name) ->
+	case get_rooms_by_title(LServer, Host, Name) of
+		[] -> true;
+		_ -> false
+	end.
+
 get_rooms(LServer, Host) ->
     case catch ejabberd_sql:sql_query(
                  LServer,
@@ -148,6 +157,18 @@ get_rooms(LServer, Host) ->
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []
+    end.
+
+get_room_title(LServer, Host, Room) ->
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(title)s from muc_room"
+                      " where host=%(Host)s"
+                      " and name=%(Room)s")) of
+    {selected, [{Title}]} ->
+        Title;
+	_ ->
+        <<"">>
     end.
 
 get_rooms_by_affiliation(LServer, Host, JID, Affiliation) ->
@@ -185,17 +206,11 @@ get_system_rooms(LServer, Host) ->
 	Filter = "system%",
     case catch ejabberd_sql:sql_query(
                  LServer,
-                 ?SQL("select @(name)s from muc_room"
+                 ?SQL("select @(name)s, @(title)s from muc_room"
                       " where host=%(Host)s"
                       " and name like %(Filter)s")) of
 	{selected, Rooms} ->
-        RoomsWithNames = lists:flatmap(
-            fun({R}) ->
-				[{R, R}]
-            end,
-            Rooms
-        ),
-	    RoomsWithNames;
+		Rooms;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []

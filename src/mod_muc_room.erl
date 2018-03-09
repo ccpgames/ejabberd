@@ -668,6 +668,10 @@ handle_info({captcha_failed, From}, normal_state,
 		 _ -> StateData
 	       end,
     {next_state, normal_state, NewState};
+handle_info(purge_non_admins, StateName, StateData) ->
+	?INFO_MSG("~s received purge_non_admins", [StateData#state.room]),
+	NewSD = remove_nonadmins(StateData),
+    {next_state, StateName, NewSD};
 handle_info(shutdown, _StateName, StateData) ->
     {stop, shutdown, StateData};
 handle_info(_Info, StateName, StateData) ->
@@ -2269,11 +2273,10 @@ send_existing_presences(ToJID, StateData) ->
     case is_room_overcrowded(StateData) of
 	true -> ok;
 	false ->
-		Name = StateData#state.room,
-		case string:prefix(Name, "local") of
-            nomatch ->
+		case is_room_category("local", StateData) of
+            false ->
                 send_existing_presences1(ToJID, StateData);
-            _ ->
+            true ->
                 send_existing_presences_for_all_members(ToJID, StateData)
         end
     end.
@@ -2312,7 +2315,7 @@ send_existing_presences_for_all_members(ToJID, StateData) ->
 get_user_from_nick(FromNick, StateData) ->
     LJID = case find_jid_by_nick(FromNick, StateData) of
                false ->
-                   jid:make(FromNick, StateData#state.host);
+                   jid:make(FromNick, StateData#state.server_host);
                JID ->
                    JID
            end,
@@ -3188,6 +3191,7 @@ process_iq_owner(From, #iq{type = set, lang = Lang,
 			    case is_allowed_log_change(Options, StateData, From) andalso
 				is_allowed_persistent_change(Options, StateData, From) andalso
 				is_allowed_room_name_desc_limits(Options, StateData) andalso
+				is_allowed_room_name_not_duplicate(Options, StateData) andalso
 				is_password_settings_correct(Options, StateData) of
 				true ->
 				    set_config(Options, StateData, Lang);
@@ -3274,6 +3278,16 @@ is_allowed_room_name_desc_limits(Options, StateData) ->
 		    infinity),
     (byte_size(RoomName) =< MaxRoomName)
 	andalso (byte_size(RoomDesc) =< MaxRoomDesc).
+
+%% Check if a room with the same display name already exists
+-spec is_allowed_room_name_not_duplicate(muc_roomconfig:result(), state()) -> boolean().
+is_allowed_room_name_not_duplicate(Options, StateData) ->
+    RoomName = proplists:get_value(roomname, Options, <<"">>),
+    mod_muc:can_use_room_name(
+        StateData#state.server_host,
+        StateData#state.host,
+        RoomName
+    ).
 
 %% Return false if:
 %% "the password for a password-protected room is blank"
@@ -3374,6 +3388,7 @@ get_config(Lang, StateData, From) ->
 -spec set_config(muc_roomconfig:result(), state(), binary()) ->
 			{error, stanza_error()} | {result, undefined, state()}.
 set_config(Options, StateData, Lang) ->
+	?INFO_MSG("set_config ~s ~p", [StateData#state.room, Options]),
     try
 	#config{} = Config = set_config(Options, StateData#state.config,
 					StateData#state.server_host, Lang),
@@ -3451,6 +3466,17 @@ set_config(Opts, Config, ServerHost, Lang) ->
 	      end
       end, Config, Opts).
 
+-spec reset_to_default_roles(state()) -> state().
+reset_to_default_roles(StateData) ->
+	lists:foldl(
+		fun({LJID, _}, SD) ->
+			Affiliation = get_affiliation(LJID, SD),
+			DefaultRole = get_default_role(Affiliation, LJID, SD),
+			set_role(LJID, DefaultRole, SD)
+		end,
+		StateData,
+		(?DICT):to_list(StateData#state.users)).
+
 -spec change_config(#config{}, state()) -> {result, undefined, state()}.
 change_config(Config, StateData) ->
     send_config_change_info(Config, StateData),
@@ -3466,13 +3492,14 @@ change_config(Config, StateData) ->
 			      NSD#state.host, NSD#state.room);
       {false, false} -> ok
     end,
-    case {(StateData#state.config)#config.members_only,
+    NSD2 = case {(StateData#state.config)#config.members_only,
 	  Config#config.members_only}
 	of
-      {false, true} ->
-	  NSD1 = remove_nonmembers(NSD), {result, undefined, NSD1};
-      _ -> {result, undefined, NSD}
-    end.
+      {false, true} -> remove_nonmembers(NSD);
+      _ -> NSD
+    end,
+	NSD3 = reset_to_default_roles(NSD2),
+	{result, undefined, NSD3}.
 
 -spec send_config_change_info(#config{}, state()) -> ok.
 send_config_change_info(Config, #state{config = Config}) -> ok;
@@ -3525,6 +3552,29 @@ remove_nonmembers(StateData) ->
 			end
 		end,
 		StateData, (?DICT):to_list(get_users_and_subscribers(StateData))).
+
+-spec remove_nonadmins(state()) -> state().
+remove_nonadmins(StateData) ->
+    NewSD = lists:foldl(
+		fun(Nick, SD) ->
+            #user{jid = JID} = get_user_from_nick(Nick, SD),
+			Affiliation = get_affiliation(JID, SD),
+			case Affiliation of
+				owner ->
+					SD;
+				admin ->
+					SD;
+				_ ->
+					?INFO_MSG("Removing ~p from ~s : ~p", [JID, SD#state.room, SD#state.affiliations]),
+					SD2 = set_affiliation(JID, none, SD),
+					catch send_kickban_presence(undefined, JID, <<"">>, 322, SD2),
+					set_role(JID, none, SD2)
+			end
+		end,
+		StateData,
+		get_all_nicks(StateData)),
+	NewSD.
+
 
 -spec set_opts([{atom(), any()}], state()) -> state().
 set_opts([], StateData) -> StateData;
@@ -3784,10 +3834,14 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 
 is_room_category(Category, StateData) ->
 	Name = StateData#state.room,
-	case string:prefix(Name, Category) of
-		nomatch -> false;
-		_ -> true
-	end.
+	Result = case Name of
+        <<Category, _Rest/binary>> ->
+            true;
+		_ ->
+            false
+	end,
+    Result.
+
 
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->

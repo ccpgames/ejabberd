@@ -43,6 +43,7 @@
 	 forget_room/3,
 	 create_room/5,
 	 shutdown_rooms/1,
+     purge_session_rooms/1,
 	 process_disco_info/1,
 	 process_disco_items/1,
 	 process_vcard/1,
@@ -63,7 +64,9 @@
 	 unregister_online_user/4,
 	 count_online_rooms_by_user/3,
 	 get_online_rooms_by_user/3,
-	 can_use_nick/4]).
+	 can_use_nick/4,
+     can_use_room_name/3]
+).
 
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3,
@@ -73,6 +76,7 @@
 -include("logger.hrl").
 -include("xmpp.hrl").
 -include("mod_muc.hrl").
+
 
 -record(state,
 	{hosts = [] :: [binary()],
@@ -91,6 +95,7 @@
 -callback restore_room(binary(), binary(), binary()) -> muc_room_opts() | error.
 -callback forget_room(binary(), binary(), binary()) -> {atomic, any()}.
 -callback can_use_nick(binary(), binary(), jid(), binary()) -> boolean().
+-callback can_use_room_name(binary(), binary(), binary()) -> boolean().
 -callback get_rooms(binary(), binary()) -> [#muc_room{}].
 -callback get_nick(binary(), binary(), jid()) -> binary() | error.
 -callback set_nick(binary(), binary(), jid(), binary()) -> {atomic, ok | false}.
@@ -136,6 +141,30 @@ shutdown_rooms(Host) ->
 	      []
       end, Rooms).
 
+is_session_room(<<"local_", _/binary>>) ->
+    true;
+is_session_room(<<"wormhole_", _/binary>>) ->
+    true;
+is_session_room(_) ->
+    false.
+
+purge_session_rooms(Host) ->
+    ?INFO_MSG("purge_session_rooms ~s", [Host]),
+    RMod = gen_mod:ram_db_mod(Host, ?MODULE),
+    MyHost = gen_mod:get_module_opt_host(Host, mod_muc,
+					 <<"conference.@HOST@">>),
+    Rooms = RMod:get_online_rooms(Host, MyHost, undefined),
+    lists:foreach(
+      fun({Name, _, Pid}) ->
+          case is_session_room(Name) of
+              true ->
+                  ?INFO_MSG("purge_non_admins ~s", [Name]),
+        	      Pid ! purge_non_admins;
+              _ ->
+                  ok
+          end
+      end, Rooms).
+
 %% This function is called by a room in three situations:
 %% A) The owner of the room destroyed it
 %% B) The only participant of a temporary room leaves it
@@ -172,10 +201,20 @@ forget_room(ServerHost, Host, Name) ->
     Mod:forget_room(LServer, Host, Name).
 
 can_use_nick(_ServerHost, _Host, _JID, <<"">>) -> false;
-can_use_nick(ServerHost, Host, JID, Nick) ->
+can_use_nick(_ServerHost, _Host, JID, Nick) ->
+    %% Enforce nick name to match user name
+    User = JID#jid.user,
+    case Nick of
+        User -> true;
+        _ ->
+            ?INFO_MSG("can_use_nick ~s ~s", [User, Nick]),
+            false
+    end.
+
+can_use_room_name(ServerHost, Host, Name) ->
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
-    Mod:can_use_nick(LServer, Host, JID, Nick).
+    Mod:can_use_room_name(LServer, Host, Name).
 
 -spec find_online_room(binary(), binary()) -> {ok, pid()} | error.
 find_online_room(Room, Host) ->
@@ -218,6 +257,12 @@ count_online_rooms_by_user(ServerHost, LUser, LServer) ->
 get_online_rooms_by_user(ServerHost, LUser, LServer) ->
     RMod = gen_mod:ram_db_mod(ServerHost, ?MODULE),
     RMod:get_online_rooms_by_user(ServerHost, LUser, LServer).
+
+-spec get_room_title(binary(), binary(), binary()) -> binary().
+get_room_title(ServerHost, Host, Room)->
+    LServer = jid:nameprep(ServerHost),
+    Mod = gen_mod:db_mod(LServer, ?MODULE),
+    Mod:get_room_title(LServer, Host, Room).
 
 %%====================================================================
 %% gen_server callbacks
@@ -534,6 +579,16 @@ process_disco_info(#iq{type = get, to = To, lang = Lang,
       IQ, #disco_info{features = Features,
 		      identities = [Identity],
 		      xdata = X});
+process_disco_info(#iq{type = get, to = To, lang = Lang,
+		       sub_els = [#disco_info{node = Node}]} = IQ) ->
+    Host = To#jid.lserver,
+    ServerHost = ejabberd_router:host_of_route(Host),
+    Name = get_room_title(ServerHost, Host, Node),
+    Identity = #identity{category = <<"conference">>,
+			 type = <<"text">>,
+			 name = Name},
+    xmpp:make_iq_result(
+      IQ, #disco_info{identities = [Identity]});
 process_disco_info(#iq{type = get, lang = Lang,
 		       sub_els = [#disco_info{}]} = IQ) ->
     xmpp:make_error(IQ, xmpp:err_item_not_found(<<"Node not found">>, Lang));

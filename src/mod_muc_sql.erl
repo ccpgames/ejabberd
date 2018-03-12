@@ -59,6 +59,7 @@ init(Host, Opts) ->
     end.
 
 store_room(LServer, Host, Name, Opts) ->
+	?INFO_MSG("store_room ~s", [Name]),
 	Title = proplists:get_value(title, Opts),
 	ComparisonKey = comparison_key_from_title(Title),
 	Affiliations = proplists:get_value(affiliations, Opts),

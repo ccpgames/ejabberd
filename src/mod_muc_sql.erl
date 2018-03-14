@@ -139,8 +139,12 @@ can_use_nick(LServer, Host, JID, Nick) ->
 
 can_use_room_name(LServer, Host, Name) ->
 	case get_rooms_by_title(LServer, Host, Name) of
-		[] -> true;
-		_ -> false
+		[] ->
+			?INFO_MSG("can_use_room_name '~s' true", [Name]),
+			true;
+		Result ->
+			?INFO_MSG("can_use_room_name '~s' false (~p)", [Name, Result]),
+			false
 	end.
 
 get_rooms(LServer, Host) ->
@@ -219,17 +223,21 @@ get_system_rooms(LServer, Host) ->
 
 get_rooms_by_title(LServer, Host, Name) ->
 	ComparisonKey = comparison_key_from_title(Name),
-    case catch ejabberd_sql:sql_query(
-                 LServer,
-                 ?SQL("select @(name)s, @(title)s from muc_room"
-                      " where host=%(Host)s"
-                      " and comparison_key=%(ComparisonKey)s")) of
-	{selected, Rooms} ->
-		Rooms;
-	Err ->
-	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
-	    []
-    end.
+	case string:equal(ComparisonKey, "") of
+		true -> [];
+		_ ->
+			case catch ejabberd_sql:sql_query(
+						 LServer,
+						 ?SQL("select @(name)s, @(title)s from muc_room"
+							  " where host=%(Host)s"
+							  " and comparison_key=%(ComparisonKey)s")) of
+			{selected, Rooms} ->
+				Rooms;
+			Err ->
+				?ERROR_MSG("failed to get rooms: ~p", [Err]),
+				[]
+			end
+	end.
 
 get_nick(LServer, Host, From) ->
     SJID = jid:encode(jid:tolower(jid:remove_resource(From))),

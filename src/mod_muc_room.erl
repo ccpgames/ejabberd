@@ -3283,11 +3283,23 @@ is_allowed_room_name_desc_limits(Options, StateData) ->
 -spec is_allowed_room_name_not_duplicate(muc_roomconfig:result(), state()) -> boolean().
 is_allowed_room_name_not_duplicate(Options, StateData) ->
     RoomName = proplists:get_value(roomname, Options, <<"">>),
-    mod_muc:can_use_room_name(
-        StateData#state.server_host,
-        StateData#state.host,
-        RoomName
-    ).
+	case RoomName of
+		<<"">> ->
+			%% Room name isn't being set
+			true;
+		_ ->
+			case string:equal(RoomName, StateData#state.room) of
+				true ->
+					%% Room name isn't changing
+					true;
+				_ ->
+					mod_muc:can_use_room_name(
+						StateData#state.server_host,
+						StateData#state.host,
+						RoomName
+					)
+			end
+	end.
 
 %% Return false if:
 %% "the password for a password-protected room is blank"

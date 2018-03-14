@@ -2273,7 +2273,7 @@ send_existing_presences(ToJID, StateData) ->
     case is_room_overcrowded(StateData) of
 	true -> ok;
 	false ->
-		case is_room_category("local", StateData) of
+		case is_room_category_local(StateData) of
             false ->
                 send_existing_presences1(ToJID, StateData);
             true ->
@@ -3283,11 +3283,23 @@ is_allowed_room_name_desc_limits(Options, StateData) ->
 -spec is_allowed_room_name_not_duplicate(muc_roomconfig:result(), state()) -> boolean().
 is_allowed_room_name_not_duplicate(Options, StateData) ->
     RoomName = proplists:get_value(roomname, Options, <<"">>),
-    mod_muc:can_use_room_name(
-        StateData#state.server_host,
-        StateData#state.host,
-        RoomName
-    ).
+	case RoomName of
+		<<"">> ->
+			%% Room name isn't being set
+			true;
+		_ ->
+			case string:equal(RoomName, StateData#state.room) of
+				true ->
+					%% Room name isn't changing
+					true;
+				_ ->
+					mod_muc:can_use_room_name(
+						StateData#state.server_host,
+						StateData#state.host,
+						RoomName
+					)
+			end
+	end.
 
 %% Return false if:
 %% "the password for a password-protected room is blank"
@@ -3832,10 +3844,20 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 						 name = get_title(StateData)}],
 			 features = Feats}}.
 
-is_room_category(Category, StateData) ->
+is_room_category_local(StateData) ->
 	Name = StateData#state.room,
 	Result = case Name of
-        <<Category, _Rest/binary>> ->
+        <<"local", _Rest/binary>> ->
+            true;
+		_ ->
+            false
+	end,
+    Result.
+
+is_room_category_wormhole(StateData) ->
+	Name = StateData#state.room,
+	Result = case Name of
+        <<"wormhole", _Rest/binary>> ->
             true;
 		_ ->
             false
@@ -3845,7 +3867,7 @@ is_room_category(Category, StateData) ->
 
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->
-	case is_room_category("wormhole", StateData) of
+	case is_room_category_wormhole(StateData) of
 		false ->
 			Occupants = ?DICT:size(StateData#state.users);
 		_ ->
@@ -3868,7 +3890,7 @@ process_iq_disco_items(From, #iq{type = get}, StateData) ->
 	  {result, get_mucroom_disco_items(StateData)};
       _ ->
 	  case is_occupant_or_admin(From, StateData)
-		  and not is_room_category("wormhole", StateData) of
+		  and not is_room_category_wormhole(StateData) of
 	    true ->
 		{result, get_mucroom_disco_items(StateData)};
 	    _ ->

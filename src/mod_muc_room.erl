@@ -3057,31 +3057,37 @@ send_kickban_presence(UJID, JID, Reason, Code, StateData) ->
 			    affiliation(), state()) -> ok.
 send_kickban_presence(UJID, JID, Reason, Code, NewAffiliation,
 		      StateData) ->
-	LJID = jid:tolower(JID),
-    LJIDs = case LJID of
-	      {U, S, <<"">>} ->
-		  (?DICT):fold(fun (J, _, Js) ->
-				       case J of
-					 {U, S, _} -> [J | Js];
-					 _ -> Js
-				       end
-			       end,
-			       [], StateData#state.users);
-	      _ ->
-		  case (?DICT):is_key(LJID, StateData#state.users) of
-		    true -> [LJID];
-		    _ -> []
-		  end
-	    end,
-    lists:foreach(fun (J) ->
-			  {ok, #user{nick = Nick}} = (?DICT):find(J,
-								  StateData#state.users),
-			  add_to_log(kickban, {Nick, Reason, Code}, StateData),
-			  tab_remove_online_user(J, StateData),
-			  send_kickban_presence1(UJID, J, Reason, Code,
-						 NewAffiliation, StateData)
-		  end,
-		  LJIDs).
+	case is_room_category_wormhole(StateData) of
+		true ->
+			%% Wormholes should be silent, not even anouncing when people leave
+			ok;
+		false ->
+			LJID = jid:tolower(JID),
+			LJIDs = case LJID of
+				  {U, S, <<"">>} ->
+				  (?DICT):fold(fun (J, _, Js) ->
+							   case J of
+							 {U, S, _} -> [J | Js];
+							 _ -> Js
+							   end
+						   end,
+						   [], StateData#state.users);
+				  _ ->
+				  case (?DICT):is_key(LJID, StateData#state.users) of
+					true -> [LJID];
+					_ -> []
+				  end
+				end,
+			lists:foreach(fun (J) ->
+					  {ok, #user{nick = Nick}} = (?DICT):find(J,
+										  StateData#state.users),
+					  add_to_log(kickban, {Nick, Reason, Code}, StateData),
+					  tab_remove_online_user(J, StateData),
+					  send_kickban_presence1(UJID, J, Reason, Code,
+								 NewAffiliation, StateData)
+				  end,
+				  LJIDs)
+	end.
 
 -spec send_kickban_presence1(undefined | jid(), jid(), binary(), pos_integer(),
 			     affiliation(), state()) -> ok.

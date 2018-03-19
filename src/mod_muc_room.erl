@@ -3875,7 +3875,7 @@ is_room_category_wormhole(StateData) ->
 
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->
-	case is_room_category_wormhole(StateData) of
+	case is_room_category_wormhole(StateData) or is_room_category_local(StateData) of
 		false ->
 			Occupants = ?DICT:size(StateData#state.users);
 		_ ->

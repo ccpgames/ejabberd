@@ -1821,7 +1821,9 @@ nick_collision(User, Nick, StateData) ->
 						      {result, muc_subscribe(), state()}.
 add_new_user(From, Nick, Packet, StateData) ->
     Lang = xmpp:get_lang(Packet),
-    MaxUsers = get_max_users(StateData),
+    %% MaxUsers = get_max_users(StateData),
+	%% Ignore this limit for EVE, the EVE server limits this in other ways
+	MaxUsers = 9999999,
     MaxAdminUsers = MaxUsers +
 		      get_max_users_admin_threshold(StateData),
     NUsers = dict:fold(fun (_, _, Acc) -> Acc + 1 end, 0,

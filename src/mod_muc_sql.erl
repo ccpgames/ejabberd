@@ -40,7 +40,7 @@
 -export([set_affiliation/6, set_affiliations/4, get_affiliation/5,
 	 get_affiliations/3, search_affiliation/4]).
 -export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4,
-     get_room_title/3]).
+     get_room_title/3, get_rooms_for_me/3]).
 
 -include("jid.hrl").
 -include("mod_muc.hrl").
@@ -206,6 +206,26 @@ get_rooms_by_affiliation(LServer, Host, JID, Affiliation) ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []
     end.
+
+get_rooms_for_me(LServer, Host, JID) ->
+    SJID = jid:encode(jid:tolower(jid:remove_resource(JID))),
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(muc_room.name)s, @(muc_room.title)s, @(affiliation)s"
+		              " from muc_room"
+				      " inner join muc_room_affiliation"
+				      "		on muc_room_affiliation.name=muc_room.name"
+                      " where muc_room.host=%(Host)s"
+				 	  "		and muc_room_affiliation.host=%(Host)s"
+                      " and username=%(SJID)s"
+                      " and affiliation in ('owner', 'member', 'admin')")) of
+	{selected, Rooms} ->
+		Rooms;
+	Err ->
+	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
+	    []
+    end.
+
 
 get_system_rooms(LServer, Host) ->
 	Filter = "system%",

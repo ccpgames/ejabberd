@@ -770,16 +770,17 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     SystemRoomNames = Mod:get_system_rooms(LServer, Host),
-    MyRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, owner),
-    AdminRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, admin),
-    OtherRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, member),
+    MyRooms = Mod:get_rooms_for_me(LServer, Host, From),
     Items = lists:flatmap(
-        fun({R, T}) ->
-            [#disco_item{jid = jid:make(R, Host), name = T}]
+        fun(X) ->
+            case X of
+                {R, T, A} ->
+                    [#disco_item{jid = jid:make(R, Host), name = T, node=A}];
+                {R, T} ->
+                    [#disco_item{jid = jid:make(R, Host), name = T}]
+            end
         end,
-        lists:append(
-            lists:append(SystemRoomNames, MyRooms),
-            lists:append(AdminRooms, OtherRooms))
+        lists:append(SystemRoomNames, MyRooms)
     ),
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 

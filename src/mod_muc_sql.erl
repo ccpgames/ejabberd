@@ -59,46 +59,54 @@ init(Host, Opts) ->
     end.
 
 store_room(LServer, Host, Name, Opts) ->
-	?INFO_MSG("store_room ~s", [Name]),
-	Title = proplists:get_value(title, Opts),
-	ComparisonKey = comparison_key_from_title(Title),
-	Affiliations = proplists:get_value(affiliations, Opts),
+    ShouldStore = case Name of
+        <<"local_", _/binary>> ->
+            false;
+        <<"wormhole_", _/binary>> ->
+            false;
+        _ ->
+            true
+        end,
+        case ShouldStore of
+            true ->
+                ?INFO_MSG("store_room ~s", [Name]),
+                Title = proplists:get_value(title, Opts),
+                ComparisonKey = comparison_key_from_title(Title),
+                Affiliations = proplists:get_value(affiliations, Opts),
 
-    SOpts = misc:term_to_expr(Opts),
-    F = fun () ->
-		?SQL_UPSERT_T(
-                   "muc_room",
-                   ["!name=%(Name)s",
-                    "!host=%(Host)s",
-                    "opts=%(SOpts)s",
-					"title=%(Title)s",
-				    "comparison_key=%(ComparisonKey)s"]),
-		case Name of
-			<<"player_", _/binary>> ->
-				ejabberd_sql:sql_query_t(
-					?SQL("delete from muc_room_affiliation"
-						 " where name=%(Name)s and host=%(Host)s")
-				),
-				lists:foreach(
-					fun({JID, {A, _}}) ->
-						Username = jid:to_string(JID),
-						Affiliation = atom_to_list(A),
-						?SQL_UPSERT_T(
-							"muc_room_affiliation",
-							[
-								"!name=%(Name)s",
-								"!host=%(Host)s",
-								"!username=%(Username)s",
-								"affiliation=%(Affiliation)s"
-							]
-						)
-					end,
-					Affiliations);
-			_ ->
-				ok
-		end
-	end,
-	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
+                SOpts = misc:term_to_expr(Opts),
+                F = fun () ->
+                    ?SQL_UPSERT_T(
+                               "muc_room",
+                               ["!name=%(Name)s",
+                                "!host=%(Host)s",
+                                "opts=%(SOpts)s",
+                                "title=%(Title)s",
+                                "comparison_key=%(ComparisonKey)s"]),
+                    ejabberd_sql:sql_query_t(
+                        ?SQL("delete from muc_room_affiliation"
+                             " where name=%(Name)s and host=%(Host)s")
+                    ),
+                    lists:foreach(
+                        fun({JID, {A, _}}) ->
+                            Username = jid:to_string(JID),
+                            Affiliation = atom_to_list(A),
+                            ?SQL_UPSERT_T(
+                                "muc_room_affiliation",
+                                [
+                                    "!name=%(Name)s",
+                                    "!host=%(Host)s",
+                                    "!username=%(Username)s",
+                                    "affiliation=%(Affiliation)s"
+                                ]
+                            )
+                        end,
+                        Affiliations)
+                end,
+                {atomic, _} = ejabberd_sql:sql_transaction(LServer, F);
+            _ ->
+                ok
+    end.
 
 comparison_key_from_title(Title) ->
 	LowerCase = string:to_lower(unicode:characters_to_list(Title)),

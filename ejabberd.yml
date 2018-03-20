@@ -237,5 +237,5 @@ host_config:
     ssoauth_allow_any: true
 
   "shagst04-ws.chat.eveonline.com":
-    bannedwords_regex_endpoint: "http://172.31.22.161:8000/banned_words/regexes/"
-    bannedwords_replace_endpoint: "http://172.31.22.161:8000/banned_words/replaceword/"
+    bannedwords_regex_endpoint: "http://13.230.58.249:8000/banned_words/regexes/"
+    bannedwords_replace_endpoint: "http://13.230.58.249:8000/banned_words/replaceword/"

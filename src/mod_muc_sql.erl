@@ -58,54 +58,78 @@ init(Host, Opts) ->
 	    ok
     end.
 
+clear_affiliations(Opts) ->
+	lists:keyreplace(affiliations, 1, Opts, {affiliations, []}).
+
 store_room(LServer, Host, Name, Opts) ->
     ShouldStore = case Name of
         <<"local_", _/binary>> ->
-            false;
+			{false, Opts, false};
         <<"wormhole_", _/binary>> ->
-            false;
+			{false, Opts, false};
+        <<"incursion_", _/binary>> ->
+			{false, Opts, false};
+        <<"resourcewars_", _/binary>> ->
+			{false, Opts, false};
+	    <<"alliance_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"corp_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"fleet_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"faction_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"player_", _/binary>> ->
+			{true, Opts, true};
         _ ->
-            true
-        end,
-        case ShouldStore of
-            true ->
-                ?INFO_MSG("store_room ~s", [Name]),
-                Title = proplists:get_value(title, Opts),
-                ComparisonKey = comparison_key_from_title(Title),
-                Affiliations = proplists:get_value(affiliations, Opts),
+			{true, Opts, false}
+	end,
 
-                SOpts = misc:term_to_expr(Opts),
-                F = fun () ->
-                    ?SQL_UPSERT_T(
-                               "muc_room",
-                               ["!name=%(Name)s",
-                                "!host=%(Host)s",
-                                "opts=%(SOpts)s",
-                                "title=%(Title)s",
-                                "comparison_key=%(ComparisonKey)s"]),
-                    ejabberd_sql:sql_query_t(
-                        ?SQL("delete from muc_room_affiliation"
-                             " where name=%(Name)s and host=%(Host)s")
-                    ),
-                    lists:foreach(
-                        fun({JID, {A, _}}) ->
-                            Username = jid:to_string(JID),
-                            Affiliation = atom_to_list(A),
-                            ?SQL_UPSERT_T(
-                                "muc_room_affiliation",
-                                [
-                                    "!name=%(Name)s",
-                                    "!host=%(Host)s",
-                                    "!username=%(Username)s",
-                                    "affiliation=%(Affiliation)s"
-                                ]
-                            )
-                        end,
-                        Affiliations)
-                end,
-                {atomic, _} = ejabberd_sql:sql_transaction(LServer, F);
-            _ ->
-                ok
+	case ShouldStore of
+		{true, NewOpts, StoreAffiliations} ->
+			?INFO_MSG("store_room ~s", [Name]),
+			Title = proplists:get_value(title, NewOpts),
+			ComparisonKey = comparison_key_from_title(Title),
+			Affiliations = proplists:get_value(affiliations, NewOpts),
+
+			SOpts = misc:term_to_expr(NewOpts),
+			F = fun () ->
+				?SQL_UPSERT_T(
+						   "muc_room",
+						   ["!name=%(Name)s",
+							"!host=%(Host)s",
+							"opts=%(SOpts)s",
+							"title=%(Title)s",
+							"comparison_key=%(ComparisonKey)s"]),
+				case StoreAffiliations of
+					true ->
+						?INFO_MSG("store_affiliations ~s", [Name]),
+						ejabberd_sql:sql_query_t(
+							?SQL("delete from muc_room_affiliation"
+								 " where name=%(Name)s and host=%(Host)s")
+						),
+						lists:foreach(
+							fun({JID, {A, _}}) ->
+								Username = jid:to_string(JID),
+								Affiliation = atom_to_list(A),
+								?SQL_UPSERT_T(
+									"muc_room_affiliation",
+									[
+										"!name=%(Name)s",
+										"!host=%(Host)s",
+										"!username=%(Username)s",
+										"affiliation=%(Affiliation)s"
+									]
+								)
+							end,
+							Affiliations);
+					_ ->
+						{atomic, ok}
+				end
+			end,
+			{atomic, _} = ejabberd_sql:sql_transaction(LServer, F);
+		_ ->
+			ok
     end.
 
 comparison_key_from_title(Title) ->

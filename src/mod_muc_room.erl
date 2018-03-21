@@ -2278,16 +2278,16 @@ send_new_presence1(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
 
 -spec send_existing_presences(jid(), state()) -> ok.
 send_existing_presences(ToJID, StateData) ->
-    case is_room_overcrowded(StateData) of
-	true -> ok;
-	false ->
-		case is_room_category_local(StateData) of
-            false ->
-                send_existing_presences1(ToJID, StateData);
-            true ->
-                send_existing_presences_for_all_members(ToJID, StateData)
-        end
-    end.
+	case is_room_category_local(StateData) of
+		true ->
+			send_existing_presences_for_all_members(ToJID, StateData);
+		false ->
+			case is_room_overcrowded(StateData) of
+				true -> ok;
+				false ->
+					send_existing_presences1(ToJID, StateData)
+			end
+	end.
 
 -spec send_existing_presences_for_all_members(jid(), state()) -> ok.
 send_existing_presences_for_all_members(ToJID, StateData) ->

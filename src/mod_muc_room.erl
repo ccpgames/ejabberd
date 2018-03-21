@@ -2722,26 +2722,31 @@ search_affiliation(Affiliation, StateData) ->
 			      #state{}) -> {result, undefined, #state{}} |
 					   {error, stanza_error()}.
 process_admin_items_set(UJID, Items, Lang, StateData) ->
-    UAffiliation = get_affiliation(UJID, StateData),
-    URole = get_role(UJID, StateData),
-    case catch find_changed_items(UJID, UAffiliation, URole,
-				  Items, Lang, StateData, [])
+	UAffiliation = get_affiliation(UJID, StateData),
+	URole = get_role(UJID, StateData),
+	case catch find_changed_items(UJID, UAffiliation, URole,
+		Items, Lang, StateData, [])
 	of
-      {result, Res} ->
-	  ?INFO_MSG("Processing MUC admin query from ~s in "
-		    "room ~s:~n ~p",
-		    [jid:encode(UJID),
-		     jid:encode(StateData#state.jid), Res]),
-	  case lists:foldl(process_item_change(UJID),
-			   StateData, lists:flatten(Res)) of
-	      {error, _} = Err ->
-		  Err;
-	      NSD ->
-		  store_room(NSD),
-		  {result, undefined, NSD}
-	  end;
-	{error, Err} -> {error, Err}
-    end.
+		{result, Res} ->
+			?INFO_MSG("Processing MUC admin query from ~s in "
+			"room ~s:~n ~p",
+				[jid:encode(UJID),
+					jid:encode(StateData#state.jid), Res]),
+			case lists:foldl(process_item_change(UJID),
+				StateData, lists:flatten(Res)) of
+				{error, _} = Err ->
+					Err;
+				NSD ->
+					case room_category(StateData#state.room) of
+						player ->
+							store_room(NSD);
+						_ ->
+							ok
+					end,
+					{result, undefined, NSD}
+			end;
+		{error, Err} -> {error, Err}
+	end.
 
 -spec process_item_change(jid()) -> function().
 process_item_change(UJID) ->
@@ -3851,6 +3856,15 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 						 type = <<"text">>,
 						 name = get_title(StateData)}],
 			 features = Feats}}.
+
+room_category(<<"local", _Rest/binary>>) ->
+	local;
+room_category(<<"wormhole", _Rest/binary>>) ->
+	wormhole;
+room_category(<<"player", _Rest/binary>>) ->
+	player;
+room_category(_) ->
+	unknown.
 
 is_room_category_local(StateData) ->
 	Name = StateData#state.room,

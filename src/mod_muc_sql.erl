@@ -185,11 +185,14 @@ can_use_room_name(LServer, Host, Name) ->
 	end.
 
 get_rooms(LServer, Host) ->
+    TimeAtStart = erlang:timestamp(),
     case catch ejabberd_sql:sql_query(
                  LServer,
                  ?SQL("select @(name)s, @(opts)s from muc_room"
                       " where host=%(Host)s")) of
 	{selected, RoomOpts} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("get_rooms ~s ~p msec", [Host, Duration]),
 	    lists:map(
 	      fun({Room, Opts}) ->
 		      #muc_room{name_host = {Room, Host},
@@ -275,6 +278,7 @@ get_rooms_for_me(LServer, Host, JID) ->
 
 
 get_system_rooms(LServer, Host) ->
+    TimeAtStart = erlang:timestamp(),
 	Filter = "system%",
     case catch ejabberd_sql:sql_query(
                  LServer,
@@ -282,6 +286,8 @@ get_system_rooms(LServer, Host) ->
                       " where host=%(Host)s"
                       " and name like %(Filter)s")) of
 	{selected, Rooms} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("get_system_rooms ~s ~p msec", [Host, Duration]),
 		Rooms;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),

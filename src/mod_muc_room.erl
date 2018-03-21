@@ -38,7 +38,8 @@
 	 get_affiliation/2,
 	 is_occupant_or_admin/2,
 	 route/2,
-	 is_owner_or_admin/2
+	 is_owner_or_admin/2,
+	 get_room_title/1
 	]).
 
 %% gen_fsm callbacks
@@ -119,6 +120,8 @@ start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueT
 is_owner_or_admin(Pid, User) ->
     p1_fsm:sync_send_all_state_event(Pid, {is_owner_or_admin, User}).
 
+get_room_title(Pid) ->
+    p1_fsm:sync_send_all_state_event(Pid, get_title).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_fsm
@@ -589,6 +592,9 @@ handle_sync_event({is_owner_or_admin, User}, _From, StateName, StateData) ->
 	Affiliation = get_affiliation(User, StateData),
 	Result = Affiliation == owner orelse Affiliation == admin,
 	{reply, Result, StateName, StateData};
+handle_sync_event(get_title, _From, StateName, StateData) ->
+	Title = get_title(StateData),
+	{reply, Title, StateName, StateData};
 handle_sync_event(_Event, _From, StateName,
 		  StateData) ->
     Reply = ok, {reply, Reply, StateName, StateData}.

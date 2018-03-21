@@ -260,9 +260,14 @@ get_online_rooms_by_user(ServerHost, LUser, LServer) ->
 
 -spec get_room_title(binary(), binary(), binary()) -> binary().
 get_room_title(ServerHost, Host, Room)->
-    LServer = jid:nameprep(ServerHost),
-    Mod = gen_mod:db_mod(LServer, ?MODULE),
-    Mod:get_room_title(LServer, Host, Room).
+    case find_online_room(Room, Host) of
+        {ok, Pid} ->
+            mod_muc_room:get_room_title(Pid);
+        _ ->
+            LServer = jid:nameprep(ServerHost),
+            Mod = gen_mod:db_mod(LServer, ?MODULE),
+            Mod:get_room_title(LServer, Host, Room)
+    end.
 
 %%====================================================================
 %% gen_server callbacks

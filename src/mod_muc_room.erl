@@ -127,11 +127,12 @@ get_room_title(Pid) ->
 %%% Callback functions from gen_fsm
 %%%----------------------------------------------------------------------
 
-init([Host, ServerHost, Access, Room, HistorySize,
+init([Host, ServerHost, Access, Room, ConfigHistorySize,
       RoomShaper, Creator, _Nick, DefRoomOpts, QueueType]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
     RoomQueue = room_queue_new(ServerHost, Shaper, QueueType),
+    HistorySize = get_room_history_size(Room, ConfigHistorySize),
     State = set_affiliation(Creator, owner,
 	    #state{host = Host, server_host = ServerHost,
 		   access = Access, room = Room,
@@ -147,10 +148,11 @@ init([Host, ServerHost, Access, Room, HistorySize,
     add_to_log(room_existence, created, State1),
     add_to_log(room_existence, started, State1),
     {ok, normal_state, State1};
-init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueType]) ->
+init([Host, ServerHost, Access, Room, ConfigHistorySize, RoomShaper, Opts, QueueType]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
     RoomQueue = room_queue_new(ServerHost, Shaper, QueueType),
+    HistorySize = get_room_history_size(Room, ConfigHistorySize),
     State = set_opts(Opts, #state{host = Host,
 				  server_host = ServerHost,
 				  access = Access,
@@ -3566,6 +3568,13 @@ send_config_change_info(New, #state{config = Old} = StateData) ->
 	    ok
     end.
 
+get_room_history_size(Room, ConfigHistorySize) ->
+    %% todo: config for which rooms get history
+	case room_category(Room) of
+        private -> ConfigHistorySize;
+        _ -> 0
+    end.
+
 -spec remove_nonmembers(state()) -> state().
 remove_nonmembers(StateData) ->
     lists:foldl(fun ({_LJID, #user{jid = JID}}, SD) ->
@@ -3869,6 +3878,8 @@ room_category(<<"wormhole", _Rest/binary>>) ->
 	wormhole;
 room_category(<<"player", _Rest/binary>>) ->
 	player;
+room_category(<<"private", _Rest/binary>>) ->
+	private;
 room_category(_) ->
 	unknown.
 

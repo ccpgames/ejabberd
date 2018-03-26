@@ -173,10 +173,7 @@ normal_state({route, <<"">>,
 	true when Type == groupchat ->
 	    Activity = get_user_activity(From, StateData),
 	    Now = p1_time_compat:system_time(micro_seconds),
-	    MinMessageInterval = trunc(gen_mod:get_module_opt(
-					 StateData#state.server_host,
-					 mod_muc, min_message_interval,
-					 0) * 1000000),
+		MinMessageInterval = get_min_message_interval(From, StateData),
 	    Size = element_size(Packet),
 	    {MessageShaper, MessageShaperInterval} =
 		shaper:update(Activity#activity.message_shaper, Size),
@@ -478,6 +475,17 @@ normal_state({route, ToNick,
     {next_state, normal_state, StateData};
 normal_state(_Event, StateData) ->
     {next_state, normal_state, StateData}.
+
+%% Get the minimum interval between messages based on who is sending
+get_min_message_interval(From, StateData) ->
+	case get_service_affiliation(From, StateData) of
+		owner -> 0;
+		_ ->
+			trunc(gen_mod:get_module_opt(
+				StateData#state.server_host,
+				mod_muc, min_message_interval,
+				0) * 1000000)
+	end.
 
 handle_event({service_message, Msg}, _StateName,
 	     StateData) ->
@@ -1531,10 +1539,7 @@ get_user_activity(JID, StateData) ->
 
 -spec store_user_activity(jid(), #activity{}, state()) -> state().
 store_user_activity(JID, UserActivity, StateData) ->
-    MinMessageInterval =
-	trunc(gen_mod:get_module_opt(StateData#state.server_host,
-				     mod_muc, min_message_interval,
-				     0) * 1000),
+    MinMessageInterval = get_min_message_interval(JID, StateData),
     MinPresenceInterval =
 	trunc(gen_mod:get_module_opt(StateData#state.server_host,
 				     mod_muc, min_presence_interval,

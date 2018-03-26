@@ -260,9 +260,14 @@ get_online_rooms_by_user(ServerHost, LUser, LServer) ->
 
 -spec get_room_title(binary(), binary(), binary()) -> binary().
 get_room_title(ServerHost, Host, Room)->
-    LServer = jid:nameprep(ServerHost),
-    Mod = gen_mod:db_mod(LServer, ?MODULE),
-    Mod:get_room_title(LServer, Host, Room).
+    case find_online_room(Room, Host) of
+        {ok, Pid} ->
+            mod_muc_room:get_room_title(Pid);
+        _ ->
+            LServer = jid:nameprep(ServerHost),
+            Mod = gen_mod:db_mod(LServer, ?MODULE),
+            Mod:get_room_title(LServer, Host, Room)
+    end.
 
 %%====================================================================
 %% gen_server callbacks
@@ -770,16 +775,17 @@ iq_disco_items(ServerHost, Host, From, Lang, MaxRoomsDiscoItems, Node, RSM)
     LServer = jid:nameprep(ServerHost),
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     SystemRoomNames = Mod:get_system_rooms(LServer, Host),
-    MyRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, owner),
-    AdminRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, admin),
-    OtherRooms = Mod:get_rooms_by_affiliation(LServer, Host, From, member),
+    MyRooms = Mod:get_rooms_for_me(LServer, Host, From),
     Items = lists:flatmap(
-        fun({R, T}) ->
-            [#disco_item{jid = jid:make(R, Host), name = T}]
+        fun(X) ->
+            case X of
+                {R, T, A} ->
+                    [#disco_item{jid = jid:make(R, Host), name = T, node=A}];
+                {R, T} ->
+                    [#disco_item{jid = jid:make(R, Host), name = T}]
+            end
         end,
-        lists:append(
-            lists:append(SystemRoomNames, MyRooms),
-            lists:append(AdminRooms, OtherRooms))
+        lists:append(SystemRoomNames, MyRooms)
     ),
     {result, #disco_items{node = Node, items = Items, rsm = undefined}};
 

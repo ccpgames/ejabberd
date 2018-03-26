@@ -38,7 +38,8 @@
 	 get_affiliation/2,
 	 is_occupant_or_admin/2,
 	 route/2,
-	 is_owner_or_admin/2
+	 is_owner_or_admin/2,
+	 get_room_title/1
 	]).
 
 %% gen_fsm callbacks
@@ -119,6 +120,8 @@ start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueT
 is_owner_or_admin(Pid, User) ->
     p1_fsm:sync_send_all_state_event(Pid, {is_owner_or_admin, User}).
 
+get_room_title(Pid) ->
+    p1_fsm:sync_send_all_state_event(Pid, get_title).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_fsm
@@ -589,6 +592,9 @@ handle_sync_event({is_owner_or_admin, User}, _From, StateName, StateData) ->
 	Affiliation = get_affiliation(User, StateData),
 	Result = Affiliation == owner orelse Affiliation == admin,
 	{reply, Result, StateName, StateData};
+handle_sync_event(get_title, _From, StateName, StateData) ->
+	Title = get_title(StateData),
+	{reply, Title, StateName, StateData};
 handle_sync_event(_Event, _From, StateName,
 		  StateData) ->
     Reply = ok, {reply, Reply, StateName, StateData}.
@@ -1821,7 +1827,9 @@ nick_collision(User, Nick, StateData) ->
 						      {result, muc_subscribe(), state()}.
 add_new_user(From, Nick, Packet, StateData) ->
     Lang = xmpp:get_lang(Packet),
-    MaxUsers = get_max_users(StateData),
+    %% MaxUsers = get_max_users(StateData),
+	%% Ignore this limit for EVE, the EVE server limits this in other ways
+	MaxUsers = 9999999,
     MaxAdminUsers = MaxUsers +
 		      get_max_users_admin_threshold(StateData),
     NUsers = dict:fold(fun (_, _, Acc) -> Acc + 1 end, 0,
@@ -2270,16 +2278,16 @@ send_new_presence1(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
 
 -spec send_existing_presences(jid(), state()) -> ok.
 send_existing_presences(ToJID, StateData) ->
-    case is_room_overcrowded(StateData) of
-	true -> ok;
-	false ->
-		case is_room_category_local(StateData) of
-            false ->
-                send_existing_presences1(ToJID, StateData);
-            true ->
-                send_existing_presences_for_all_members(ToJID, StateData)
-        end
-    end.
+	case is_room_category_local(StateData) of
+		true ->
+			send_existing_presences_for_all_members(ToJID, StateData);
+		false ->
+			case is_room_overcrowded(StateData) of
+				true -> ok;
+				false ->
+					send_existing_presences1(ToJID, StateData)
+			end
+	end.
 
 -spec send_existing_presences_for_all_members(jid(), state()) -> ok.
 send_existing_presences_for_all_members(ToJID, StateData) ->
@@ -2720,26 +2728,31 @@ search_affiliation(Affiliation, StateData) ->
 			      #state{}) -> {result, undefined, #state{}} |
 					   {error, stanza_error()}.
 process_admin_items_set(UJID, Items, Lang, StateData) ->
-    UAffiliation = get_affiliation(UJID, StateData),
-    URole = get_role(UJID, StateData),
-    case catch find_changed_items(UJID, UAffiliation, URole,
-				  Items, Lang, StateData, [])
+	UAffiliation = get_affiliation(UJID, StateData),
+	URole = get_role(UJID, StateData),
+	case catch find_changed_items(UJID, UAffiliation, URole,
+		Items, Lang, StateData, [])
 	of
-      {result, Res} ->
-	  ?INFO_MSG("Processing MUC admin query from ~s in "
-		    "room ~s:~n ~p",
-		    [jid:encode(UJID),
-		     jid:encode(StateData#state.jid), Res]),
-	  case lists:foldl(process_item_change(UJID),
-			   StateData, lists:flatten(Res)) of
-	      {error, _} = Err ->
-		  Err;
-	      NSD ->
-		  store_room(NSD),
-		  {result, undefined, NSD}
-	  end;
-	{error, Err} -> {error, Err}
-    end.
+		{result, Res} ->
+			?INFO_MSG("Processing MUC admin query from ~s in "
+			"room ~s:~n ~p",
+				[jid:encode(UJID),
+					jid:encode(StateData#state.jid), Res]),
+			case lists:foldl(process_item_change(UJID),
+				StateData, lists:flatten(Res)) of
+				{error, _} = Err ->
+					Err;
+				NSD ->
+					case room_category(StateData#state.room) of
+						player ->
+							store_room(NSD);
+						_ ->
+							ok
+					end,
+					{result, undefined, NSD}
+			end;
+		{error, Err} -> {error, Err}
+	end.
 
 -spec process_item_change(jid()) -> function().
 process_item_change(UJID) ->
@@ -3057,31 +3070,37 @@ send_kickban_presence(UJID, JID, Reason, Code, StateData) ->
 			    affiliation(), state()) -> ok.
 send_kickban_presence(UJID, JID, Reason, Code, NewAffiliation,
 		      StateData) ->
-	LJID = jid:tolower(JID),
-    LJIDs = case LJID of
-	      {U, S, <<"">>} ->
-		  (?DICT):fold(fun (J, _, Js) ->
-				       case J of
-					 {U, S, _} -> [J | Js];
-					 _ -> Js
-				       end
-			       end,
-			       [], StateData#state.users);
-	      _ ->
-		  case (?DICT):is_key(LJID, StateData#state.users) of
-		    true -> [LJID];
-		    _ -> []
-		  end
-	    end,
-    lists:foreach(fun (J) ->
-			  {ok, #user{nick = Nick}} = (?DICT):find(J,
-								  StateData#state.users),
-			  add_to_log(kickban, {Nick, Reason, Code}, StateData),
-			  tab_remove_online_user(J, StateData),
-			  send_kickban_presence1(UJID, J, Reason, Code,
-						 NewAffiliation, StateData)
-		  end,
-		  LJIDs).
+	case is_room_category_wormhole(StateData) of
+		true ->
+			%% Wormholes should be silent, not even anouncing when people leave
+			ok;
+		false ->
+			LJID = jid:tolower(JID),
+			LJIDs = case LJID of
+				  {U, S, <<"">>} ->
+				  (?DICT):fold(fun (J, _, Js) ->
+							   case J of
+							 {U, S, _} -> [J | Js];
+							 _ -> Js
+							   end
+						   end,
+						   [], StateData#state.users);
+				  _ ->
+				  case (?DICT):is_key(LJID, StateData#state.users) of
+					true -> [LJID];
+					_ -> []
+				  end
+				end,
+			lists:foreach(fun (J) ->
+					  {ok, #user{nick = Nick}} = (?DICT):find(J,
+										  StateData#state.users),
+					  add_to_log(kickban, {Nick, Reason, Code}, StateData),
+					  tab_remove_online_user(J, StateData),
+					  send_kickban_presence1(UJID, J, Reason, Code,
+								 NewAffiliation, StateData)
+				  end,
+				  LJIDs)
+	end.
 
 -spec send_kickban_presence1(undefined | jid(), jid(), binary(), pos_integer(),
 			     affiliation(), state()) -> ok.
@@ -3844,6 +3863,15 @@ process_iq_disco_info(_From, #iq{type = get, lang = Lang}, StateData) ->
 						 name = get_title(StateData)}],
 			 features = Feats}}.
 
+room_category(<<"local", _Rest/binary>>) ->
+	local;
+room_category(<<"wormhole", _Rest/binary>>) ->
+	wormhole;
+room_category(<<"player", _Rest/binary>>) ->
+	player;
+room_category(_) ->
+	unknown.
+
 is_room_category_local(StateData) ->
 	Name = StateData#state.room,
 	Result = case Name of
@@ -3867,7 +3895,7 @@ is_room_category_wormhole(StateData) ->
 
 -spec iq_disco_info_extras(binary(), state()) -> xdata().
 iq_disco_info_extras(Lang, StateData) ->
-	case is_room_category_wormhole(StateData) of
+	case is_room_category_wormhole(StateData) or is_room_category_local(StateData) of
 		false ->
 			Occupants = ?DICT:size(StateData#state.users);
 		_ ->

@@ -40,7 +40,7 @@
 -export([set_affiliation/6, set_affiliations/4, get_affiliation/5,
 	 get_affiliations/3, search_affiliation/4]).
 -export([get_system_rooms/2, get_rooms_by_title/3, get_rooms_by_affiliation/4,
-     get_room_title/3]).
+     get_room_title/3, get_rooms_for_me/3]).
 
 -include("jid.hrl").
 -include("mod_muc.hrl").
@@ -58,61 +58,98 @@ init(Host, Opts) ->
 	    ok
     end.
 
-store_room(LServer, Host, Name, Opts) ->
-	?INFO_MSG("store_room ~s", [Name]),
-	Title = proplists:get_value(title, Opts),
-	ComparisonKey = comparison_key_from_title(Title),
-	Affiliations = proplists:get_value(affiliations, Opts),
+clear_affiliations(Opts) ->
+	lists:keyreplace(affiliations, 1, Opts, {affiliations, []}).
 
-    SOpts = misc:term_to_expr(Opts),
-    F = fun () ->
-		?SQL_UPSERT_T(
-                   "muc_room",
-                   ["!name=%(Name)s",
-                    "!host=%(Host)s",
-                    "opts=%(SOpts)s",
-					"title=%(Title)s",
-				    "comparison_key=%(ComparisonKey)s"]),
-		case Name of
-			<<"player_", _/binary>> ->
-				ejabberd_sql:sql_query_t(
-					?SQL("delete from muc_room_affiliation"
-						 " where name=%(Name)s and host=%(Host)s")
-				),
-				lists:foreach(
-					fun({JID, {A, _}}) ->
-						Username = jid:to_string(JID),
-						Affiliation = atom_to_list(A),
-						?SQL_UPSERT_T(
-							"muc_room_affiliation",
-							[
-								"!name=%(Name)s",
-								"!host=%(Host)s",
-								"!username=%(Username)s",
-								"affiliation=%(Affiliation)s"
-							]
-						)
-					end,
-					Affiliations);
-			_ ->
-				ok
-		end
+store_room(LServer, Host, Name, Opts) ->
+    ShouldStore = case Name of
+        <<"local_", _/binary>> ->
+			{false, Opts, false};
+        <<"wormhole_", _/binary>> ->
+			{false, Opts, false};
+        <<"incursion_", _/binary>> ->
+			{false, Opts, false};
+        <<"resourcewars_", _/binary>> ->
+			{false, Opts, false};
+	    <<"alliance_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"corp_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"fleet_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"faction_", _/binary>> ->
+			{true, clear_affiliations(Opts), false};
+	    <<"player_", _/binary>> ->
+			{true, Opts, true};
+        _ ->
+			{true, Opts, false}
 	end,
-	{atomic, _} = ejabberd_sql:sql_transaction(LServer, F).
+
+	case ShouldStore of
+		{true, NewOpts, StoreAffiliations} ->
+            TimeAtStart = erlang:timestamp(),
+			Title = proplists:get_value(title, NewOpts),
+			ComparisonKey = comparison_key_from_title(Title),
+			Affiliations = proplists:get_value(affiliations, NewOpts),
+
+			SOpts = misc:term_to_expr(NewOpts),
+			F = fun () ->
+				?SQL_UPSERT_T(
+						   "muc_room",
+						   ["!name=%(Name)s",
+							"!host=%(Host)s",
+							"opts=%(SOpts)s",
+							"title=%(Title)s",
+							"comparison_key=%(ComparisonKey)s"]),
+				case StoreAffiliations of
+					true ->
+						?INFO_MSG("store_affiliations ~s", [Name]),
+						ejabberd_sql:sql_query_t(
+							?SQL("delete from muc_room_affiliation"
+								 " where name=%(Name)s and host=%(Host)s")
+						),
+						lists:foreach(
+							fun({JID, {A, _}}) ->
+								Username = jid:to_string(JID),
+								Affiliation = atom_to_list(A),
+								?SQL_UPSERT_T(
+									"muc_room_affiliation",
+									[
+										"!name=%(Name)s",
+										"!host=%(Host)s",
+										"!username=%(Username)s",
+										"affiliation=%(Affiliation)s"
+									]
+								)
+							end,
+							Affiliations);
+					_ ->
+						{atomic, ok}
+				end
+			end,
+			{atomic, _} = ejabberd_sql:sql_transaction(LServer, F),
+            Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+			?INFO_MSG("store_room ~s ~p msec", [Name, Duration]);
+		_ ->
+			ok
+    end.
 
 comparison_key_from_title(Title) ->
-	LowerCase = string:to_lower(binary_to_list(Title)),
+	LowerCase = string:to_lower(unicode:characters_to_list(Title)),
 	Tokens = string:tokens(LowerCase, " "),
 	ComparisonKey = string:join(Tokens, ""),
-	list_to_binary(ComparisonKey).
+	unicode:characters_to_binary(ComparisonKey).
 
 restore_room(LServer, Host, Name) ->
+    TimeAtStart = erlang:timestamp(),
     case catch ejabberd_sql:sql_query(
                  LServer,
                  ?SQL("select @(opts)s from muc_room where name=%(Name)s"
                       " and host=%(Host)s")) of
 
 	{selected, [{Opts}]} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("restore_room ~s ~p msec", [Name, Duration]),
 	    mod_muc:opts_to_binary(ejabberd_sql:decode_term(Opts));
 	_ ->
 	    error
@@ -148,11 +185,14 @@ can_use_room_name(LServer, Host, Name) ->
 	end.
 
 get_rooms(LServer, Host) ->
+    TimeAtStart = erlang:timestamp(),
     case catch ejabberd_sql:sql_query(
                  LServer,
                  ?SQL("select @(name)s, @(opts)s from muc_room"
                       " where host=%(Host)s")) of
 	{selected, RoomOpts} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("get_rooms ~s ~p msec", [Host, Duration]),
 	    lists:map(
 	      fun({Room, Opts}) ->
 		      #muc_room{name_host = {Room, Host},
@@ -165,18 +205,22 @@ get_rooms(LServer, Host) ->
     end.
 
 get_room_title(LServer, Host, Room) ->
+    TimeAtStart = erlang:timestamp(),
     case catch ejabberd_sql:sql_query(
                  LServer,
                  ?SQL("select @(title)s from muc_room"
                       " where host=%(Host)s"
                       " and name=%(Room)s")) of
     {selected, [{Title}]} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("get_room_title ~s ~p msec", [Room, Duration]),
         Title;
 	_ ->
         <<"">>
     end.
 
 get_rooms_by_affiliation(LServer, Host, JID, Affiliation) ->
+    TimeAtStart = erlang:timestamp(),
     SJID = jid:encode(jid:tolower(jid:remove_resource(JID))),
 	Aff = atom_to_list(Affiliation),
     case catch ejabberd_sql:sql_query(
@@ -201,13 +245,40 @@ get_rooms_by_affiliation(LServer, Host, JID, Affiliation) ->
             end,
             Rooms
         ),
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart),
+        ?INFO_MSG("get_rooms_by_affiliation ~s ~s ~p usec",
+            [SJID, Aff, Duration]),
 	    RoomsWithNames;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
 	    []
     end.
 
+get_rooms_for_me(LServer, Host, JID) ->
+    TimeAtStart = erlang:timestamp(),
+    SJID = jid:encode(jid:tolower(jid:remove_resource(JID))),
+    case catch ejabberd_sql:sql_query(
+                 LServer,
+                 ?SQL("select @(muc_room.name)s, @(muc_room.title)s, @(affiliation)s"
+		              " from muc_room"
+				      " inner join muc_room_affiliation"
+				      "		on muc_room_affiliation.name=muc_room.name"
+                      " where muc_room.host=%(Host)s"
+				 	  "		and muc_room_affiliation.host=%(Host)s"
+                      " and username=%(SJID)s"
+                      " and affiliation in ('owner', 'member', 'admin')")) of
+	{selected, Rooms} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("get_rooms_for_me ~s ~p msec", [SJID, Duration]),
+		Rooms;
+	Err ->
+	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
+	    []
+    end.
+
+
 get_system_rooms(LServer, Host) ->
+    TimeAtStart = erlang:timestamp(),
 	Filter = "system%",
     case catch ejabberd_sql:sql_query(
                  LServer,
@@ -215,6 +286,8 @@ get_system_rooms(LServer, Host) ->
                       " where host=%(Host)s"
                       " and name like %(Filter)s")) of
 	{selected, Rooms} ->
+        Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+        ?INFO_MSG("get_system_rooms ~s ~p msec", [Host, Duration]),
 		Rooms;
 	Err ->
 	    ?ERROR_MSG("failed to get rooms: ~p", [Err]),
@@ -222,6 +295,7 @@ get_system_rooms(LServer, Host) ->
     end.
 
 get_rooms_by_title(LServer, Host, Name) ->
+    TimeAtStart = erlang:timestamp(),
 	ComparisonKey = comparison_key_from_title(Name),
 	case string:equal(ComparisonKey, "") of
 		true -> [];
@@ -232,6 +306,8 @@ get_rooms_by_title(LServer, Host, Name) ->
 							  " where host=%(Host)s"
 							  " and comparison_key=%(ComparisonKey)s")) of
 			{selected, Rooms} ->
+                Duration = timer:now_diff(erlang:timestamp(), TimeAtStart) / 1000,
+                ?INFO_MSG("get_rooms_by_title ~s ~p msec", [Name, Duration]),
 				Rooms;
 			Err ->
 				?ERROR_MSG("failed to get rooms: ~p", [Err]),

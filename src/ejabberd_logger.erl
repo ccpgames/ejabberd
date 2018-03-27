@@ -64,19 +64,6 @@ get_log_path() ->
 	    end
     end.
 
-get_loggly_url() ->
-    case ejabberd_config:env_binary_to_list(ejabberd, loggly_url) of
-	{ok, Url} ->
-	    Url;
-	undefined ->
-	    case os:getenv("EJABBERD_LOGGLY_URL") of
-		false ->
-		    none;
-		Url ->
-		    Url
-	    end
-    end.
-
 opt_type(loggly_url) -> fun iolist_to_binary/1;
 opt_type(log_rotate_date) ->
     fun(S) -> binary_to_list(iolist_to_binary(S)) end;
@@ -87,7 +74,7 @@ opt_type(log_rotate_count) ->
 opt_type(log_rate_limit) ->
     fun(I) when is_integer(I), I >= 0 -> I end;
 opt_type(_) ->
-    [loggly_url, log_rotate_date, log_rotate_size, log_rotate_count, log_rate_limit].
+    [log_rotate_date, log_rotate_size, log_rotate_count, log_rate_limit, loggly_url].
 
 get_integer_env(Name, Default) ->
     case application:get_env(ejabberd, Name) of
@@ -141,7 +128,6 @@ do_start_for_logger() ->
 
 %% Start lager
 do_start() ->
-    LogglyUrl = get_loggly_url(),
     application:start(inets),
 
     application:load(sasl),
@@ -159,7 +145,7 @@ do_start() ->
     application:set_env(
       lager, handlers,
       [{lager_console_backend, error},
-       {lager_loggly_backend, [info, LogglyUrl]},
+       {lager_loggly_backend, info},
        {lager_file_backend, [{file, ConsoleLog}, {level, info}, {date, LogRotateDate},
                              {count, LogRotateCount}, {size, LogRotateSize}]},
        {lager_file_backend, [{file, ErrorLog}, {level, error}, {date, LogRotateDate},

@@ -50,12 +50,13 @@ depends(_Host, _Opts) ->
     [].
 
 mod_opt_type(interval) -> fun (I) when is_integer(I), I > 0 -> I end;
+mod_opt_type(datadog_url) -> fun iolist_to_binary/1;
 mod_opt_type(_) ->
-    [interval].
+    [interval, datadog_url].
 
 init([ServerHost, Opts]) ->
     Interval = gen_mod:get_opt(interval, Opts, 60),
-    Url = get_datadog_url(),
+    Url = gen_mod:get_opt(datadog_url, Opts, <<"<missing datadog_url>">>),
     ?INFO_MSG("mod_logstats starting timer on ~s with ~p seconds interval on ~s",
         [ServerHost, Interval, Url]),
     {ok, Timer} = timer:send_interval(timer:seconds(Interval), logstats),
@@ -137,17 +138,3 @@ terminate(_Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-get_datadog_url() ->
-    case ejabberd_config:env_binary_to_list(ejabberd, datadog_url) of
-	{ok, Url} ->
-	    Url;
-	undefined ->
-	    case os:getenv("EJABBERD_DATADOG_URL") of
-		false ->
-		    none;
-		Url ->
-		    Url
-	    end
-    end.
-

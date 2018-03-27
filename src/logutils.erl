@@ -10,7 +10,7 @@
 -author("snorri.sturluson@ccpgames.com").
 
 %% API
--export([proplist_to_json/1, any_to_binary/1]).
+-export([proplist_to_json/1, any_to_binary/1, join_without_trailing_separator/2]).
 
 proplist_to_json(Proplist) ->
     Lines = proplist_to_json_fields(Proplist),

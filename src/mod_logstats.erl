@@ -28,7 +28,8 @@
 
 -record(state, {
     server_host :: binary(),
-    timer :: timer:tref()
+    timer :: timer:tref(),
+    datadog_url :: binary()
 }).
 
 -type state() :: #state{}.
@@ -54,17 +55,73 @@ mod_opt_type(_) ->
 
 init([ServerHost, Opts]) ->
     Interval = gen_mod:get_opt(interval, Opts, 60),
-    ?INFO_MSG("mod_logstats starting timer on ~s with ~p seconds interval",
-        [ServerHost, Interval]),
+    Url = get_datadog_url(),
+    ?INFO_MSG("mod_logstats starting timer on ~s with ~p seconds interval on ~s",
+        [ServerHost, Interval, Url]),
     {ok, Timer} = timer:send_interval(timer:seconds(Interval), logstats),
-    {ok, #state{server_host = ServerHost, timer = Timer}}.
+    {ok, #state{server_host = ServerHost, timer = Timer, datadog_url = Url}}.
 
 handle_info(logstats, State) ->
     Server = State#state.server_host,
+
     UserCount = length(ejabberd_sm:dirty_get_my_sessions_list()),
+    UserCountMetric = format_metric(user_count, UserCount, Server),
+
     ProcessCount = length(erlang:processes()),
-    ?INFO_MSG("{server: ~s, num_users_online: ~p, num_processes: ~p}", [Server, UserCount, ProcessCount]),
+    ProcessCountMetric = format_metric(process_count, ProcessCount, Server),
+
+    TotalMemory = erlang:memory(total),
+    TotalMemoryMetric = format_metric(memory_total, TotalMemory, Server),
+
+    ProcessesMemory = erlang:memory(processes),
+    ProcessesMemoryMetric = format_metric(memory_processes, ProcessesMemory, Server),
+
+    SystemMemory = erlang:memory(system),
+    SystemMemoryMetric = format_metric(memory_system, SystemMemory, Server),
+
+    AtomMemory = erlang:memory(atom),
+    AtomMemoryMetric = format_metric(memory_atom, AtomMemory, Server),
+
+    BinaryMemory = erlang:memory(binary),
+    BinaryMemoryMetric = format_metric(memory_binary, BinaryMemory, Server),
+
+    EtsMemory = erlang:memory(ets),
+    EtsMemoryMetric = format_metric(memory_ets, EtsMemory, Server),
+
+    RunQueue = erlang:statistics(run_queue),
+    RunQueueMetric = format_metric(run_queue, RunQueue, Server),
+
+    MetricsList = [
+        UserCountMetric,
+        ProcessCountMetric,
+        TotalMemoryMetric,
+        ProcessesMemoryMetric,
+        SystemMemoryMetric,
+        AtomMemoryMetric,
+        BinaryMemoryMetric,
+        EtsMemoryMetric,
+        RunQueueMetric
+    ],
+    CombinedMetrics = logutils:join_without_trailing_separator(MetricsList, ", "),
+
+    Payload = lists:flatten(io_lib:format("{\"series\": [~s]}", [CombinedMetrics])),
+
+    Request = {State#state.datadog_url, [{"te", "chunked"}], "application/json", Payload},
+    httpc:request(post, Request, [], [{body_format, binary}]),
+
     {noreply, State}.
+
+format_metric(Name, UserCount, Server) ->
+    Template = "{\"metric\":\"ejabberd.~s\", \"points\": [[~p, ~p]], \"host\": \"~s\", \"tags\":[\"~s\"]}",
+    lists:flatten(io_lib:format(
+        Template,
+        [
+            logutils:any_to_binary(Name),
+            erlang:system_time(second),
+            UserCount,
+            Server,
+            logutils:any_to_binary(erlang:node())
+            ])).
 
 handle_call(Request, From, State) ->
     ?ERROR_MSG("Got unexpected request from ~p: ~p", [From, Request]),
@@ -80,4 +137,17 @@ terminate(_Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+get_datadog_url() ->
+    case ejabberd_config:env_binary_to_list(ejabberd, datadog_url) of
+	{ok, Url} ->
+	    Url;
+	undefined ->
+	    case os:getenv("EJABBERD_DATADOG_URL") of
+		false ->
+		    none;
+		Url ->
+		    Url
+	    end
+    end.
 

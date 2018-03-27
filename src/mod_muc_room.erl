@@ -143,7 +143,7 @@ init([Host, ServerHost, Access, Room, ConfigHistorySize,
 		   room_shaper = Shaper}),
     State1 = set_opts(DefRoomOpts, State),
     store_room(State1),
-    ?INFO_MSG("Created MUC room ~s@~s by ~s",
+    ?NOTICE_MSG("Created MUC room ~s@~s by ~s",
 	      [Room, Host, jid:encode(Creator)]),
     add_to_log(room_existence, created, State1),
     add_to_log(room_existence, started, State1),
@@ -504,12 +504,12 @@ handle_event({destroy, Reason}, _StateName,
     {result, undefined, stop} =
 	destroy_room(#muc_destroy{xmlns = ?NS_MUC_OWNER, reason = Reason},
 		     StateData),
-    ?INFO_MSG("Destroyed MUC room ~s with reason: ~p",
+    ?NOTICE_MSG("Destroyed MUC room ~s with reason: ~p",
 	      [jid:encode(StateData#state.jid), Reason]),
     add_to_log(room_existence, destroyed, StateData),
     {stop, shutdown, StateData};
 handle_event(destroy, StateName, StateData) ->
-    ?INFO_MSG("Destroyed MUC room ~s",
+    ?NOTICE_MSG("Destroyed MUC room ~s",
 	      [jid:encode(StateData#state.jid)]),
     handle_event({destroy, undefined}, StateName, StateData);
 handle_event({set_affiliations, Affiliations},
@@ -685,7 +685,7 @@ handle_info({captcha_failed, From}, normal_state,
 	       end,
     {next_state, normal_state, NewState};
 handle_info(purge_non_admins, StateName, StateData) ->
-	?INFO_MSG("~s received purge_non_admins", [StateData#state.room]),
+	?NOTICE_MSG("~s received purge_non_admins", [StateData#state.room]),
 	NewSD = remove_nonadmins(StateData),
     {next_state, StateName, NewSD};
 handle_info(shutdown, _StateName, StateData) ->
@@ -694,7 +694,7 @@ handle_info(_Info, StateName, StateData) ->
     {next_state, StateName, StateData}.
 
 terminate(Reason, _StateName, StateData) ->
-    ?INFO_MSG("Stopping MUC room ~s@~s",
+    ?NOTICE_MSG("Stopping MUC room ~s@~s",
 	      [StateData#state.room, StateData#state.host]),
     ReasonT = case Reason of
 		shutdown ->
@@ -1087,7 +1087,7 @@ close_room_if_temporary_and_empty(StateData1) ->
 	andalso (?DICT):size(StateData1#state.users) == 0
 	andalso (?DICT):size(StateData1#state.subscribers) == 0 of
       true ->
-	  ?INFO_MSG("Destroyed MUC room ~s because it's temporary "
+	  ?NOTICE_MSG("Destroyed MUC room ~s because it's temporary "
 		    "and empty",
 		    [jid:encode(StateData1#state.jid)]),
 	  add_to_log(room_existence, destroyed, StateData1),
@@ -2741,7 +2741,7 @@ process_admin_items_set(UJID, Items, Lang, StateData) ->
 		Items, Lang, StateData, [])
 	of
 		{result, Res} ->
-			?INFO_MSG("Processing MUC admin query from ~s in "
+			?NOTICE_MSG("Processing MUC admin query from ~s in "
 			"room ~s:~n ~p",
 				[jid:encode(UJID),
 					jid:encode(StateData#state.jid), Res]),
@@ -3202,7 +3202,7 @@ process_iq_owner(From, #iq{type = set, lang = Lang,
 	    ErrText = <<"Owner privileges required">>,
 	    {error, xmpp:err_forbidden(ErrText, Lang)};
        Destroy /= undefined, Config == undefined, Items == [] ->
-	    ?INFO_MSG("Destroyed MUC room ~s by the owner ~s",
+	    ?NOTICE_MSG("Destroyed MUC room ~s by the owner ~s",
 		      [jid:encode(StateData#state.jid), jid:encode(From)]),
 	    add_to_log(room_existence, destroyed, StateData),
 	    destroy_room(Destroy, StateData);
@@ -3610,7 +3610,7 @@ remove_nonadmins(StateData) ->
 				admin ->
 					SD;
 				_ ->
-					?INFO_MSG("Removing ~p from ~s : ~p", [JID, SD#state.room, SD#state.affiliations]),
+					?NOTICE_MSG("Removing ~p from ~s : ~p", [JID, SD#state.room, SD#state.affiliations]),
 					SD2 = set_affiliation(JID, none, SD),
 					catch send_kickban_presence(undefined, JID, <<"">>, 322, SD2),
 					set_role(JID, none, SD2)

@@ -31,7 +31,7 @@
 
 -include("ejabberd.hrl").
 
--type loglevel() :: 0 | 1 | 2 | 3 | 4 | 5.
+-type loglevel() :: 0 | 1 | 2 | 3 | 4 | 5 | 6.
 
 -spec start() -> ok.
 -spec get_log_path() -> string().
@@ -64,6 +64,20 @@ get_log_path() ->
 	    end
     end.
 
+get_loggly_url() ->
+    case ejabberd_config:env_binary_to_list(ejabberd, loggly_url) of
+	{ok, Url} ->
+	    Url;
+	undefined ->
+	    case os:getenv("EJABBERD_LOGGLY_URL") of
+		false ->
+		    none;
+		Url ->
+		    Url
+	    end
+    end.
+
+opt_type(loggly_url) -> fun iolist_to_binary/1;
 opt_type(log_rotate_date) ->
     fun(S) -> binary_to_list(iolist_to_binary(S)) end;
 opt_type(log_rotate_size) ->
@@ -73,7 +87,7 @@ opt_type(log_rotate_count) ->
 opt_type(log_rate_limit) ->
     fun(I) when is_integer(I), I >= 0 -> I end;
 opt_type(_) ->
-    [log_rotate_date, log_rotate_size, log_rotate_count, log_rate_limit].
+    [loggly_url, log_rotate_date, log_rotate_size, log_rotate_count, log_rate_limit].
 
 get_integer_env(Name, Default) ->
     case application:get_env(ejabberd, Name) of
@@ -127,6 +141,9 @@ do_start_for_logger() ->
 
 %% Start lager
 do_start() ->
+    LogglyUrl = get_loggly_url(),
+    application:start(inets),
+
     application:load(sasl),
     application:set_env(sasl, sasl_error_logger, false),
     application:load(lager),
@@ -141,7 +158,8 @@ do_start() ->
     application:set_env(lager, error_logger_hwm, LogRateLimit),
     application:set_env(
       lager, handlers,
-      [{lager_console_backend, info},
+      [{lager_console_backend, error},
+       {lager_loggly_backend, [info, LogglyUrl]},
        {lager_file_backend, [{file, ConsoleLog}, {level, info}, {date, LogRotateDate},
                              {count, LogRotateCount}, {size, LogRotateSize}]},
        {lager_file_backend, [{file, ErrorLog}, {level, error}, {date, LogRotateDate},
@@ -180,9 +198,9 @@ get() ->
         critical -> {1, critical, "Critical"};
         error -> {2, error, "Error"};
         warning -> {3, warning, "Warning"};
-        notice -> {3, warning, "Warning"};
-        info -> {4, info, "Info"};
-        debug -> {5, debug, "Debug"}
+        notice -> {4, notice, "Notice"};
+        info -> {5, info, "Info"};
+        debug -> {6, debug, "Debug"}
     end.
 
 %% @spec (loglevel() | {loglevel(), list()}) -> {module, module()}
@@ -192,8 +210,9 @@ set(LogLevel) when is_integer(LogLevel) ->
                         1 -> critical;
                         2 -> error;
                         3 -> warning;
-                        4 -> info;
-                        5 -> debug;
+                        4 -> notice;
+                        5 -> info;
+                        6 -> debug;
 			E ->  throw({wrong_loglevel, E})
                     end,
     case get_lager_loglevel() of
@@ -203,8 +222,6 @@ set(LogLevel) when is_integer(LogLevel) ->
             ConsoleLog = get_log_path(),
             lists:foreach(
               fun({lager_file_backend, File} = H) when File == ConsoleLog ->
-                      lager:set_loglevel(H, LagerLogLevel);
-                 (lager_console_backend = H) ->
                       lager:set_loglevel(H, LagerLogLevel);
                  (elixir_logger_backend = H) ->
                       lager:set_loglevel(H, LagerLogLevel);

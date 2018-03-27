@@ -27,6 +27,9 @@
 -define(INFO_MSG(Format, Args),
 	lager:info(Format, Args)).
 
+-define(NOTICE_MSG(Format, Args),
+	lager:notice(Format, Args)).
+
 -define(WARNING_MSG(Format, Args),
 	lager:warning(Format, Args)).
 

@@ -28,10 +28,12 @@
 -include_lib("lager/include/lager.hrl").
 
 init(Level) ->
+    application:start(inets),
     State = #state{
         level = lager_util:level_to_num(Level),
         loggly_url = undefined
     },
+
     {ok, State}.
 
 handle_event({log, Message}, #state{level=Level} = State) ->
@@ -41,13 +43,11 @@ handle_event({log, Message}, #state{level=Level} = State) ->
             %% so we keep checking the config until we get a value
             NewState = case State#state.loggly_url of
                 undefined ->
-                    BaseLogglyUrl = ejabberd_config:get_option(loggly_url),
-                    case BaseLogglyUrl of
+                    LogglyUrl = ejabberd_config:get_option(loggly_url),
+                    case LogglyUrl of
                         undefined -> State;
                         _ ->
-                            LogglyUrl = lists:flatten(io_lib:format(
-                                "~s/tag/ejabberd/", [BaseLogglyUrl])),
-                            #state{loggly_url = LogglyUrl}
+                            #state{loggly_url = binary_to_list(LogglyUrl)}
                     end;
                 _ ->
                     State

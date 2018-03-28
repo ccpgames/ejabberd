@@ -56,7 +56,7 @@ mod_opt_type(_) ->
 
 init([ServerHost, Opts]) ->
     Interval = gen_mod:get_opt(interval, Opts, 60),
-    Url = gen_mod:get_opt(datadog_url, Opts, <<"<missing datadog_url>">>),
+    Url = binary_to_list(gen_mod:get_opt(datadog_url, Opts, <<"<missing datadog_url>">>)),
     ?INFO_MSG("mod_logstats starting timer on ~s with ~p seconds interval on ~s",
         [ServerHost, Interval, Url]),
     {ok, Timer} = timer:send_interval(timer:seconds(Interval), logstats),
@@ -118,7 +118,7 @@ format_metric(Name, UserCount, Server) ->
         Template,
         [
             logutils:any_to_binary(Name),
-            erlang:system_time(second),
+            p1_time_compat:system_time(seconds),
             UserCount,
             Server,
             logutils:any_to_binary(erlang:node())

@@ -128,8 +128,6 @@ do_start_for_logger() ->
 
 %% Start lager
 do_start() ->
-    application:start(inets),
-
     application:load(sasl),
     application:set_env(sasl, sasl_error_logger, false),
     application:load(lager),

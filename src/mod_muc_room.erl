@@ -127,11 +127,12 @@ get_room_title(Pid) ->
 %%% Callback functions from gen_fsm
 %%%----------------------------------------------------------------------
 
-init([Host, ServerHost, Access, Room, HistorySize,
+init([Host, ServerHost, Access, Room, ConfigHistorySize,
       RoomShaper, Creator, _Nick, DefRoomOpts, QueueType]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
     RoomQueue = room_queue_new(ServerHost, Shaper, QueueType),
+    HistorySize = get_room_history_size(Room, ConfigHistorySize),
     State = set_affiliation(Creator, owner,
 	    #state{host = Host, server_host = ServerHost,
 		   access = Access, room = Room,
@@ -142,15 +143,16 @@ init([Host, ServerHost, Access, Room, HistorySize,
 		   room_shaper = Shaper}),
     State1 = set_opts(DefRoomOpts, State),
     store_room(State1),
-    ?INFO_MSG("Created MUC room ~s@~s by ~s",
+    ?NOTICE_MSG("Created MUC room ~s@~s by ~s",
 	      [Room, Host, jid:encode(Creator)]),
     add_to_log(room_existence, created, State1),
     add_to_log(room_existence, started, State1),
     {ok, normal_state, State1};
-init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueType]) ->
+init([Host, ServerHost, Access, Room, ConfigHistorySize, RoomShaper, Opts, QueueType]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
     RoomQueue = room_queue_new(ServerHost, Shaper, QueueType),
+    HistorySize = get_room_history_size(Room, ConfigHistorySize),
     State = set_opts(Opts, #state{host = Host,
 				  server_host = ServerHost,
 				  access = Access,
@@ -171,10 +173,7 @@ normal_state({route, <<"">>,
 	true when Type == groupchat ->
 	    Activity = get_user_activity(From, StateData),
 	    Now = p1_time_compat:system_time(micro_seconds),
-	    MinMessageInterval = trunc(gen_mod:get_module_opt(
-					 StateData#state.server_host,
-					 mod_muc, min_message_interval,
-					 0) * 1000000),
+		MinMessageInterval = get_min_message_interval(From, StateData),
 	    Size = element_size(Packet),
 	    {MessageShaper, MessageShaperInterval} =
 		shaper:update(Activity#activity.message_shaper, Size),
@@ -477,6 +476,17 @@ normal_state({route, ToNick,
 normal_state(_Event, StateData) ->
     {next_state, normal_state, StateData}.
 
+%% Get the minimum interval between messages based on who is sending
+get_min_message_interval(From, StateData) ->
+	case get_service_affiliation(From, StateData) of
+		owner -> 0;
+		_ ->
+			trunc(gen_mod:get_module_opt(
+				StateData#state.server_host,
+				mod_muc, min_message_interval,
+				0) * 1000000)
+	end.
+
 handle_event({service_message, Msg}, _StateName,
 	     StateData) ->
     MessagePkt = #message{type = groupchat, body = xmpp:mk_text(Msg)},
@@ -494,12 +504,12 @@ handle_event({destroy, Reason}, _StateName,
     {result, undefined, stop} =
 	destroy_room(#muc_destroy{xmlns = ?NS_MUC_OWNER, reason = Reason},
 		     StateData),
-    ?INFO_MSG("Destroyed MUC room ~s with reason: ~p",
+    ?NOTICE_MSG("Destroyed MUC room ~s with reason: ~p",
 	      [jid:encode(StateData#state.jid), Reason]),
     add_to_log(room_existence, destroyed, StateData),
     {stop, shutdown, StateData};
 handle_event(destroy, StateName, StateData) ->
-    ?INFO_MSG("Destroyed MUC room ~s",
+    ?NOTICE_MSG("Destroyed MUC room ~s",
 	      [jid:encode(StateData#state.jid)]),
     handle_event({destroy, undefined}, StateName, StateData);
 handle_event({set_affiliations, Affiliations},
@@ -675,7 +685,7 @@ handle_info({captcha_failed, From}, normal_state,
 	       end,
     {next_state, normal_state, NewState};
 handle_info(purge_non_admins, StateName, StateData) ->
-	?INFO_MSG("~s received purge_non_admins", [StateData#state.room]),
+	?NOTICE_MSG("~s received purge_non_admins", [StateData#state.room]),
 	NewSD = remove_nonadmins(StateData),
     {next_state, StateName, NewSD};
 handle_info(shutdown, _StateName, StateData) ->
@@ -684,7 +694,7 @@ handle_info(_Info, StateName, StateData) ->
     {next_state, StateName, StateData}.
 
 terminate(Reason, _StateName, StateData) ->
-    ?INFO_MSG("Stopping MUC room ~s@~s",
+    ?NOTICE_MSG("Stopping MUC room ~s@~s",
 	      [StateData#state.room, StateData#state.host]),
     ReasonT = case Reason of
 		shutdown ->
@@ -1077,7 +1087,7 @@ close_room_if_temporary_and_empty(StateData1) ->
 	andalso (?DICT):size(StateData1#state.users) == 0
 	andalso (?DICT):size(StateData1#state.subscribers) == 0 of
       true ->
-	  ?INFO_MSG("Destroyed MUC room ~s because it's temporary "
+	  ?NOTICE_MSG("Destroyed MUC room ~s because it's temporary "
 		    "and empty",
 		    [jid:encode(StateData1#state.jid)]),
 	  add_to_log(room_existence, destroyed, StateData1),
@@ -1529,10 +1539,7 @@ get_user_activity(JID, StateData) ->
 
 -spec store_user_activity(jid(), #activity{}, state()) -> state().
 store_user_activity(JID, UserActivity, StateData) ->
-    MinMessageInterval =
-	trunc(gen_mod:get_module_opt(StateData#state.server_host,
-				     mod_muc, min_message_interval,
-				     0) * 1000),
+    MinMessageInterval = get_min_message_interval(JID, StateData),
     MinPresenceInterval =
 	trunc(gen_mod:get_module_opt(StateData#state.server_host,
 				     mod_muc, min_presence_interval,
@@ -2734,7 +2741,7 @@ process_admin_items_set(UJID, Items, Lang, StateData) ->
 		Items, Lang, StateData, [])
 	of
 		{result, Res} ->
-			?INFO_MSG("Processing MUC admin query from ~s in "
+			?NOTICE_MSG("Processing MUC admin query from ~s in "
 			"room ~s:~n ~p",
 				[jid:encode(UJID),
 					jid:encode(StateData#state.jid), Res]),
@@ -3195,7 +3202,7 @@ process_iq_owner(From, #iq{type = set, lang = Lang,
 	    ErrText = <<"Owner privileges required">>,
 	    {error, xmpp:err_forbidden(ErrText, Lang)};
        Destroy /= undefined, Config == undefined, Items == [] ->
-	    ?INFO_MSG("Destroyed MUC room ~s by the owner ~s",
+	    ?NOTICE_MSG("Destroyed MUC room ~s by the owner ~s",
 		      [jid:encode(StateData#state.jid), jid:encode(From)]),
 	    add_to_log(room_existence, destroyed, StateData),
 	    destroy_room(Destroy, StateData);
@@ -3566,6 +3573,13 @@ send_config_change_info(New, #state{config = Old} = StateData) ->
 	    ok
     end.
 
+get_room_history_size(Room, ConfigHistorySize) ->
+    %% todo: config for which rooms get history
+	case room_category(Room) of
+        private -> ConfigHistorySize;
+        _ -> 0
+    end.
+
 -spec remove_nonmembers(state()) -> state().
 remove_nonmembers(StateData) ->
     lists:foldl(fun ({_LJID, #user{jid = JID}}, SD) ->
@@ -3596,7 +3610,7 @@ remove_nonadmins(StateData) ->
 				admin ->
 					SD;
 				_ ->
-					?INFO_MSG("Removing ~p from ~s : ~p", [JID, SD#state.room, SD#state.affiliations]),
+					?NOTICE_MSG("Removing ~p from ~s : ~p", [JID, SD#state.room, SD#state.affiliations]),
 					SD2 = set_affiliation(JID, none, SD),
 					catch send_kickban_presence(undefined, JID, <<"">>, 322, SD2),
 					set_role(JID, none, SD2)
@@ -3869,6 +3883,8 @@ room_category(<<"wormhole", _Rest/binary>>) ->
 	wormhole;
 room_category(<<"player", _Rest/binary>>) ->
 	player;
+room_category(<<"private", _Rest/binary>>) ->
+	private;
 room_category(_) ->
 	unknown.
 

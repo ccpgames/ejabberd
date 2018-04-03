@@ -62,7 +62,7 @@ init([Host, _Opts]) ->
     catch ets:new(compiled_regexes, [named_table, public, set]),
     erlang:send_after(timer:seconds(5), self(), {fetch_regex, Host}),
     catch ets:new(bw_replacewords, [named_table, public, set]),
-    erlang:send(self(), {fetch_replace, Host}),
+    erlang:send_after(timer:seconds(5), self(), {fetch_replace, Host}),
     {ok, #state{host = Host}}.
 
 handle_call(_Request, _From, State) ->
@@ -81,6 +81,7 @@ handle_info({fetch_regex, Host}, State) ->
 
 handle_info({fetch_replace, Host}, State) ->
     fetch_replacewords(Host),
+	erlang:send_after(?FETCH_INTERVAL, self(), {fetch_replace, Host}),
     {noreply, State};
 	
 handle_info(_Info, State) ->

@@ -2753,6 +2753,8 @@ process_admin_items_set(UJID, Items, Lang, StateData) ->
 					case room_category(StateData#state.room) of
 						player ->
 							store_room(NSD);
+						system ->
+							store_room(NSD);
 						_ ->
 							ok
 					end,
@@ -3885,6 +3887,8 @@ room_category(<<"player", _Rest/binary>>) ->
 	player;
 room_category(<<"private", _Rest/binary>>) ->
 	private;
+room_category(<<"system", _Rest/binary>>) ->
+	system;
 room_category(_) ->
 	unknown.
 

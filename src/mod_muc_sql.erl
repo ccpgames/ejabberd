@@ -81,6 +81,8 @@ store_room(LServer, Host, Name, Opts) ->
 			{true, clear_affiliations(Opts), false};
 	    <<"player_", _/binary>> ->
 			{true, Opts, true};
+	    <<"system_", _/binary>> ->
+			{true, Opts, false};
         _ ->
 			{true, Opts, false}
 	end,

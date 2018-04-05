@@ -688,6 +688,14 @@ handle_info(purge_non_admins, StateName, StateData) ->
 	?NOTICE_MSG("~s received purge_non_admins", [StateData#state.room]),
 	NewSD = remove_nonadmins(StateData),
     {next_state, StateName, NewSD};
+handle_info(close_if_empty, StateName, StateData) ->
+	?NOTICE_MSG("~s ~s received close_if_empty", [StateData#state.host, StateData#state.room]),
+	case (?DICT):size(StateData#state.users) == 0 of
+		true ->
+		    {stop, shutdown, StateData};
+		_ ->
+			{next_state, StateName, StateData}
+	end;
 handle_info(shutdown, _StateName, StateData) ->
     {stop, shutdown, StateData};
 handle_info(_Info, StateName, StateData) ->

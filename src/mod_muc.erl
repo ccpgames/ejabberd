@@ -44,6 +44,7 @@
 	 create_room/5,
 	 shutdown_rooms/1,
      purge_session_rooms/1,
+     close_empty_rooms/1,
 	 process_disco_info/1,
 	 process_disco_items/1,
 	 process_vcard/1,
@@ -164,6 +165,19 @@ purge_session_rooms(Host) ->
                   ok
           end
       end, Rooms).
+
+close_empty_rooms(Host) ->
+    ?INFO_MSG("close_empty_rooms ~s", [Host]),
+    RMod = gen_mod:ram_db_mod(Host, ?MODULE),
+    MyHost = gen_mod:get_module_opt_host(Host, mod_muc,
+					 <<"conference.@HOST@">>),
+    Rooms = RMod:get_online_rooms(Host, MyHost, undefined),
+    lists:foreach(
+      fun({Name, _, Pid}) ->
+          ?INFO_MSG("close_if_empty ~s", [Name]),
+          Pid ! close_if_empty
+      end, Rooms).
+
 
 %% This function is called by a room in three situations:
 %% A) The owner of the room destroyed it
@@ -483,10 +497,10 @@ do_route1(Host, ServerHost, Access, HistorySize, RoomShaper,
     RMod = gen_mod:ram_db_mod(ServerHost, ?MODULE),
     case RMod:find_online_room(ServerHost, Room, Host) of
 	error ->
-	    case is_create_request(Packet) of
-		true ->
-            case restore_room(ServerHost, Host, Room) of
-            error->
+        case restore_room(ServerHost, Host, Room) of
+        error->
+            case is_create_request(Packet) of
+            true ->
                 case check_user_can_create_room(
                    ServerHost, AccessCreate, From, Room) and
                 check_create_roomid(ServerHost, Room) of
@@ -505,20 +519,20 @@ do_route1(Host, ServerHost, Access, HistorySize, RoomShaper,
                     Err = xmpp:err_forbidden(ErrText, Lang),
                     ejabberd_router:route_error(Packet, Err)
                 end;
-            Opts ->
-                ?INFO_MSG("MUC: restore room '~s'~n", [Room]),
-                {ok, Pid} = mod_muc_room:start(Host, ServerHost, Access, Room,
-                HistorySize, RoomShaper, Opts, QueueType),
-                RMod:register_online_room(ServerHost, Room, Host, Pid),
-                mod_muc_room:route(Pid, Packet),
-                ok
+            false ->
+                Lang = xmpp:get_lang(Packet),
+                ErrText = <<"Conference room does not exist">>,
+                Err = xmpp:err_item_not_found(ErrText, Lang),
+                ejabberd_router:route_error(Packet, Err)
             end;
-		false ->
-		    Lang = xmpp:get_lang(Packet),
-		    ErrText = <<"Conference room does not exist">>,
-		    Err = xmpp:err_item_not_found(ErrText, Lang),
-		    ejabberd_router:route_error(Packet, Err)
-	    end;
+        Opts ->
+            ?INFO_MSG("MUC: restore room '~s'~n", [Room]),
+            {ok, Pid} = mod_muc_room:start(Host, ServerHost, Access, Room,
+            HistorySize, RoomShaper, Opts, QueueType),
+            RMod:register_online_room(ServerHost, Room, Host, Pid),
+            mod_muc_room:route(Pid, Packet),
+            ok
+        end;
 	{ok, Pid} ->
 	    ?DEBUG("MUC: send to process ~p~n", [Pid]),
 	    mod_muc_room:route(Pid, Packet),

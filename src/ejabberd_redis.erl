@@ -4,7 +4,7 @@
 %%% Created :  8 May 2016 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -45,7 +45,7 @@
 -define(SERVER, ?MODULE).
 -define(PROCNAME, 'ejabberd_redis_client').
 -define(TR_STACK, redis_transaction_stack).
--define(DEFAULT_MAX_QUEUE, 5000).
+-define(DEFAULT_MAX_QUEUE, 10000).
 -define(MAX_RETRIES, 1).
 -define(CALL_TIMEOUT, 60*1000). %% 60 seconds
 

@@ -5,7 +5,7 @@
 %%% Created :  7 Dec 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -198,13 +198,11 @@ dirty_get_connections() ->
 
 -spec tls_options(binary(), [proplists:property()]) -> [proplists:property()].
 tls_options(LServer, DefaultOpts) ->
-    TLSOpts1 = case ejabberd_config:get_option(
-		      {domain_certfile, LServer},
-		      ejabberd_config:get_option(
-			{s2s_certfile, LServer})) of
+    TLSOpts1 = case get_certfile(LServer) of
 		   undefined -> DefaultOpts;
-		   CertFile -> lists:keystore(certfile, 1, DefaultOpts,
-					      {certfile, CertFile})
+		   CertFile ->
+		       lists:keystore(certfile, 1, DefaultOpts,
+				      {certfile, CertFile})
 	       end,
     TLSOpts2 = case ejabberd_config:get_option(
 		      {s2s_ciphers, LServer}) of
@@ -224,8 +222,7 @@ tls_options(LServer, DefaultOpts) ->
                    DHFile -> lists:keystore(dhfile, 1, TLSOpts3,
 					    {dhfile, DHFile})
                end,
-    TLSOpts5 = case ejabberd_config:get_option(
-		      {s2s_cafile, LServer}) of
+    TLSOpts5 = case get_cafile(LServer) of
 		   undefined -> TLSOpts4;
 		   CAFile -> lists:keystore(cafile, 1, TLSOpts4,
 					    {cafile, CAFile})
@@ -268,6 +265,26 @@ queue_type(LServer) ->
     ejabberd_config:get_option(
       {s2s_queue_type, LServer},
       ejabberd_config:default_queue_type(LServer)).
+
+-spec get_certfile(binary()) -> file:filename_all() | undefined.
+get_certfile(LServer) ->
+    case ejabberd_pkix:get_certfile(LServer) of
+	{ok, CertFile} ->
+	    CertFile;
+	error ->
+	    ejabberd_config:get_option(
+	      {domain_certfile, LServer},
+	      ejabberd_config:get_option({s2s_certfile, LServer}))
+    end.
+
+-spec get_cafile(binary()) -> file:filename_all() | undefined.
+get_cafile(LServer) ->
+    case ejabberd_config:get_option({s2s_cafile, LServer}) of
+	undefined ->
+	    ejabberd_pkix:ca_file();
+	File ->
+	    File
+    end.
 
 %%====================================================================
 %% gen_server callbacks
@@ -694,7 +711,6 @@ get_s2s_state(S2sPid) ->
 -type use_starttls() :: boolean() | optional | required | required_trusted.
 -spec opt_type(route_subdomains) -> fun((s2s | local) -> s2s | local);
 	      (s2s_access) -> fun((any()) -> any());
-	      (s2s_certfile) -> fun((binary()) -> binary());
 	      (s2s_ciphers) -> fun((binary()) -> binary());
 	      (s2s_dhfile) -> fun((binary()) -> binary());
 	      (s2s_cafile) -> fun((binary()) -> binary());
@@ -711,7 +727,6 @@ opt_type(route_subdomains) ->
     end;
 opt_type(s2s_access) ->
     fun acl:access_rules_validator/1;
-opt_type(s2s_certfile) -> fun misc:try_read_file/1;
 opt_type(s2s_ciphers) -> fun iolist_to_binary/1;
 opt_type(s2s_dhfile) -> fun misc:try_read_file/1;
 opt_type(s2s_cafile) -> fun misc:try_read_file/1;
@@ -744,6 +759,6 @@ opt_type(s2s_timeout) ->
 opt_type(s2s_queue_type) ->
     fun(ram) -> ram; (file) -> file end;
 opt_type(_) ->
-    [route_subdomains, s2s_access,  s2s_certfile, s2s_zlib,
+    [route_subdomains, s2s_access, s2s_zlib,
      s2s_ciphers, s2s_dhfile, s2s_cafile, s2s_protocol_options,
      s2s_tls_compression, s2s_use_starttls, s2s_timeout, s2s_queue_type].

@@ -5,7 +5,7 @@
 %%% Created : 22 Dec 2004 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -86,7 +86,7 @@ init([Host]) ->
 
 get_pids(Host) ->
     Rs = mnesia:dirty_read(sql_pool, Host),
-    [R#sql_pool.pid || R <- Rs].
+    [R#sql_pool.pid || R <- Rs, is_process_alive(R#sql_pool.pid)].
 
 get_random_pid(Host) ->
     case get_pids(Host) of

@@ -5,7 +5,7 @@
 %%% Created : 12 Oct 2006 by Evgeniy Khramtsov <xram@jabber.ru>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -40,6 +40,7 @@
 -include("ejabberd.hrl").
 -include("logger.hrl").
 -include("xmpp.hrl").
+-include("translate.hrl").
 
 -define(PROCNAME, ejabberd_mod_proxy65_service).
 
@@ -60,18 +61,17 @@ reload(Host, NewOpts, OldOpts) ->
 
 init([Host, Opts]) ->
     process_flag(trap_exit, true),
-    IQDisc = gen_mod:get_opt(iqdisc, Opts, gen_iq_handler:iqdisc(Host)),
-    MyHosts = gen_mod:get_opt_hosts(Host, Opts, <<"proxy.@HOST@">>),
+    MyHosts = gen_mod:get_opt_hosts(Host, Opts),
     lists:foreach(
       fun(MyHost) ->
 	      gen_iq_handler:add_iq_handler(ejabberd_local, MyHost, ?NS_DISCO_INFO,
-					    ?MODULE, process_disco_info, IQDisc),
+					    ?MODULE, process_disco_info),
 	      gen_iq_handler:add_iq_handler(ejabberd_local, MyHost, ?NS_DISCO_ITEMS,
-					    ?MODULE, process_disco_items, IQDisc),
+					    ?MODULE, process_disco_items),
 	      gen_iq_handler:add_iq_handler(ejabberd_local, MyHost, ?NS_VCARD,
-					    ?MODULE, process_vcard, IQDisc),
+					    ?MODULE, process_vcard),
 	      gen_iq_handler:add_iq_handler(ejabberd_local, MyHost, ?NS_BYTESTREAMS,
-					    ?MODULE, process_bytestreams, IQDisc),
+					    ?MODULE, process_bytestreams),
 	      ejabberd_router:register_route(MyHost, Host)
       end, MyHosts),
     {ok, #state{myhosts = MyHosts}}.
@@ -92,22 +92,12 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({reload, ServerHost, NewOpts, OldOpts}, State) ->
-    NewHosts = gen_mod:get_opt_hosts(ServerHost, NewOpts, <<"proxy.@HOST@">>),
-    OldHosts = gen_mod:get_opt_hosts(ServerHost, OldOpts, <<"proxy.@HOST@">>),
-    NewIQDisc = gen_mod:get_opt(iqdisc, NewOpts, gen_iq_handler:iqdisc(ServerHost)),
-    OldIQDisc = gen_mod:get_opt(iqdisc, OldOpts, gen_iq_handler:iqdisc(ServerHost)),
-    if (NewIQDisc /= OldIQDisc) ->
-	    lists:foreach(
-	      fun(NewHost) ->
-		      register_handlers(NewHost, NewIQDisc)
-	      end, NewHosts -- (NewHosts -- OldHosts));
-       true ->
-	    ok
-    end,
+    NewHosts = gen_mod:get_opt_hosts(ServerHost, NewOpts),
+    OldHosts = gen_mod:get_opt_hosts(ServerHost, OldOpts),
     lists:foreach(
       fun(NewHost) ->
 	      ejabberd_router:register_route(NewHost, ServerHost),
-	      register_handlers(NewHost, NewIQDisc)
+	      register_handlers(NewHost)
       end, NewHosts -- OldHosts),
     lists:foreach(
       fun(OldHost) ->
@@ -143,8 +133,7 @@ process_disco_info(#iq{type = set, lang = Lang} = IQ) ->
     xmpp:make_error(IQ, xmpp:err_not_allowed(Txt, Lang));
 process_disco_info(#iq{type = get, to = To, lang = Lang} = IQ) ->
     Host = ejabberd_router:host_of_route(To#jid.lserver),
-    Name = gen_mod:get_module_opt(Host, mod_proxy65, name,
-				  <<"SOCKS5 Bytestreams">>),
+    Name = gen_mod:get_module_opt(Host, mod_proxy65, name),
     Info = ejabberd_hooks:run_fold(disco_info, Host,
 				   [], [Host, ?MODULE, <<"">>, <<"">>]),
     xmpp:make_iq_result(
@@ -177,7 +166,7 @@ process_vcard(#iq{type = get, lang = Lang} = IQ) ->
 process_bytestreams(#iq{type = get, from = JID, to = To, lang = Lang} = IQ) ->
     Host = To#jid.lserver,
     ServerHost = ejabberd_router:host_of_route(Host),
-    ACL = gen_mod:get_module_opt(ServerHost, mod_proxy65, access, all),
+    ACL = gen_mod:get_module_opt(ServerHost, mod_proxy65, access),
     case acl:match_rule(ServerHost, ACL, JID) of
 	allow ->
 	    StreamHost = get_streamhost(Host, ServerHost),
@@ -189,18 +178,18 @@ process_bytestreams(#iq{type = set, lang = Lang,
 			sub_els = [#bytestreams{sid = SID}]} = IQ)
   when SID == <<"">> orelse size(SID) > 128 ->
     Why = {bad_attr_value, <<"sid">>, <<"query">>, ?NS_BYTESTREAMS},
-    Txt = xmpp:format_error(Why),
+    Txt = xmpp:io_format_error(Why),
     xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang));
 process_bytestreams(#iq{type = set, lang = Lang, 
 			sub_els = [#bytestreams{activate = undefined}]} = IQ) ->
     Why = {missing_cdata, <<"">>, <<"activate">>, ?NS_BYTESTREAMS},
-    Txt = xmpp:format_error(Why),
+    Txt = xmpp:io_format_error(Why),
     xmpp:make_error(IQ, xmpp:err_jid_malformed(Txt, Lang));
 process_bytestreams(#iq{type = set, lang = Lang, from = InitiatorJID, to = To,
 			sub_els = [#bytestreams{activate = TargetJID,
 						sid = SID}]} = IQ) ->
     ServerHost = ejabberd_router:host_of_route(To#jid.lserver),
-    ACL = gen_mod:get_module_opt(ServerHost, mod_proxy65, access, all),
+    ACL = gen_mod:get_module_opt(ServerHost, mod_proxy65, access),
     case acl:match_rule(ServerHost, ACL, InitiatorJID) of
 	allow ->
 	    Node = ejabberd_cluster:get_node_by_id(To#jid.lresource),
@@ -252,8 +241,11 @@ transform_module_options(Opts) ->
 -spec get_streamhost(binary(), binary()) -> streamhost().
 get_streamhost(Host, ServerHost) ->
     {Port, IP} = get_port_ip(ServerHost),
-    HostName = gen_mod:get_module_opt(ServerHost, mod_proxy65, hostname,
-				      misc:ip_to_list(IP)),
+    HostName0 = case gen_mod:get_module_opt(ServerHost, mod_proxy65, hostname) of
+		    undefined -> misc:ip_to_list(IP);
+		    Val -> Val
+		end,
+    HostName = misc:expand_keyword(<<"@HOST@">>, HostName0, ServerHost),
     Resource = ejabberd_cluster:node_id(),
     #streamhost{jid = jid:make(<<"">>, Host, Resource),
 		host = HostName,
@@ -261,8 +253,11 @@ get_streamhost(Host, ServerHost) ->
 
 -spec get_port_ip(binary()) -> {pos_integer(), inet:ip_address()}.
 get_port_ip(Host) ->
-    Port = gen_mod:get_module_opt(Host, mod_proxy65, port, 7777),
-    IP = gen_mod:get_module_opt(Host, mod_proxy65, ip, get_my_ip()),
+    Port = gen_mod:get_module_opt(Host, mod_proxy65, port),
+    IP = case gen_mod:get_module_opt(Host, mod_proxy65, ip) of
+	     undefined -> get_my_ip();
+	     Addr -> Addr
+	 end,
     {Port, IP}.
 
 -spec get_my_ip() -> inet:ip_address().
@@ -274,17 +269,17 @@ get_my_ip() ->
     end.
 
 max_connections(ServerHost) ->
-    gen_mod:get_module_opt(ServerHost, mod_proxy65, max_connections, infinity).
+    gen_mod:get_module_opt(ServerHost, mod_proxy65, max_connections).
 
-register_handlers(Host, IQDisc) ->
+register_handlers(Host) ->
     gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_DISCO_INFO,
-				  ?MODULE, process_disco_info, IQDisc),
+				  ?MODULE, process_disco_info),
     gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_DISCO_ITEMS,
-				  ?MODULE, process_disco_items, IQDisc),
+				  ?MODULE, process_disco_items),
     gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_VCARD,
-				  ?MODULE, process_vcard, IQDisc),
+				  ?MODULE, process_vcard),
     gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_BYTESTREAMS,
-				  ?MODULE, process_bytestreams, IQDisc).
+				  ?MODULE, process_bytestreams).
 
 unregister_handlers(Host) ->
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_DISCO_INFO),

@@ -5,7 +5,7 @@
 %%% Created :  8 Mar 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -81,15 +81,8 @@ prepare(ClientIn) ->
       _ -> error
     end.
 
-parse(S) -> parse1(binary_to_list(S), "", []).
-
-parse1([0 | Cs], S, T) ->
-    parse1(Cs, "", [list_to_binary(lists:reverse(S)) | T]);
-parse1([C | Cs], S, T) -> parse1(Cs, [C | S], T);
-%parse1([], [], T) ->
-%    lists:reverse(T);
-parse1([], S, T) ->
-    lists:reverse([list_to_binary(lists:reverse(S)) | T]).
+parse(S) ->
+    binary:split(S, <<0>>, [global]).
 
 parse_domain(S) -> parse_domain1(binary_to_list(S), "", []).
 

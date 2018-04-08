@@ -5,7 +5,7 @@
 %%% Created : 12 Oct 2006 by Evgeniy Khramtsov <xram@jabber.ru>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,9 +39,11 @@
 %% supervisor callbacks.
 -export([init/1]).
 
--export([start_link/2, mod_opt_type/1, depends/2]).
+-export([start_link/2, mod_opt_type/1, mod_options/1, depends/2]).
 
 -define(PROCNAME, ejabberd_mod_proxy65).
+
+-include("translate.hrl").
 
 -callback init() -> any().
 -callback register_stream(binary(), pid()) -> ok | {error, any()}.
@@ -114,9 +116,14 @@ mod_opt_type(access) -> fun acl:access_rules_validator/1;
 mod_opt_type(host) -> fun iolist_to_binary/1;
 mod_opt_type(hosts) ->
     fun(L) -> lists:map(fun iolist_to_binary/1, L) end;
-mod_opt_type(hostname) -> fun iolist_to_binary/1;
+mod_opt_type(hostname) ->
+    fun(undefined) -> undefined;
+       (H) -> iolist_to_binary(H)
+    end;
 mod_opt_type(ip) ->
-    fun (S) ->
+    fun(undefined) ->
+	    undefined;
+       (S) ->
 	    {ok, Addr} =
 		inet_parse:address(binary_to_list(iolist_to_binary(S))),
 	    Addr
@@ -131,10 +138,16 @@ mod_opt_type(max_connections) ->
 mod_opt_type(ram_db_type) ->
     fun(T) -> ejabberd_config:v_db(?MODULE, T) end;
 mod_opt_type(Opt) ->
-    case mod_proxy65_stream:listen_opt_type(Opt) of
-	Opts when is_list(Opts) ->
-	    [access, host, hosts, hostname, ip, name, port,
-	     max_connections, ram_db_type] ++ Opts;
-	Fun ->
-	    Fun
-    end.
+    mod_proxy65_stream:listen_opt_type(Opt).
+
+mod_options(Host) ->
+    [{ram_db_type, ejabberd_config:default_ram_db(Host, ?MODULE)},
+     {access, all},
+     {host, <<"proxy.@HOST@">>},
+     {hosts, []},
+     {hostname, undefined},
+     {ip, undefined},
+     {port, 7777},
+     {name, ?T("SOCKS5 Bytestreams")},
+     {max_connections, infinity}] ++
+	mod_proxy65_stream:listen_options().

@@ -5,7 +5,7 @@
 %%% Created : 7 Oct 2006 by Magnus Henoch <henoch@dtek.chalmers.se>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -48,7 +48,7 @@
 	 handle_cast/2, terminate/2, code_change/3]).
 
 -export([user_send_packet/1, user_receive_packet/1,
-	 c2s_presence_in/2, mod_opt_type/1]).
+	 c2s_presence_in/2, mod_opt_type/1, mod_options/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -66,6 +66,9 @@
     {ok, non_neg_integer() | [binary()]} | error.
 -callback caps_write(binary(), {binary(), binary()},
 		     non_neg_integer() | [binary()]) -> any().
+-callback use_cache(binary()) -> boolean().
+
+-optional_callbacks([use_cache/1]).
 
 start(Host, Opts) ->
     gen_mod:start_child(?MODULE, Host, Opts).
@@ -78,17 +81,23 @@ get_features(_Host, nothing) -> [];
 get_features(Host, #caps{node = Node, version = Version,
 		   exts = Exts}) ->
     SubNodes = [Version | Exts],
-    lists:foldl(fun (SubNode, Acc) ->
-			NodePair = {Node, SubNode},
-			case ets_cache:lookup(caps_features_cache, NodePair,
-					      caps_read_fun(Host, NodePair))
-			    of
-			  {ok, Features} when is_list(Features) ->
-			      Features ++ Acc;
-			  _ -> Acc
-			end
-		end,
-		[], SubNodes).
+    Mod = gen_mod:db_mod(Host, ?MODULE),
+    lists:foldl(
+      fun(SubNode, Acc) ->
+	      NodePair = {Node, SubNode},
+	      Res = case use_cache(Mod, Host) of
+			true ->
+			    ets_cache:lookup(caps_features_cache, NodePair,
+					     caps_read_fun(Host, NodePair));
+			false ->
+			    Mod:caps_read(Host, NodePair)
+		    end,
+	      case Res of
+		  {ok, Features} when is_list(Features) ->
+		      Features ++ Acc;
+		  _ -> Acc
+	      end
+      end, [], SubNodes).
 
 -spec list_features(ejabberd_c2s:state()) -> [{ljid(), caps()}].
 list_features(C2SState) ->
@@ -118,11 +127,11 @@ user_send_packet({#presence{type = available,
 			    from = #jid{luser = U, lserver = LServer} = From,
 			    to = #jid{luser = U, lserver = LServer,
 				      lresource = <<"">>}} = Pkt,
-		  State}) ->
+		  #{jid := To} = State}) ->
     case read_caps(Pkt) of
 	nothing -> ok;
 	#caps{version = Version, exts = Exts} = Caps ->
-	    feature_request(LServer, From, Caps, [Version | Exts])
+	    feature_request(LServer, From, To, Caps, [Version | Exts])
     end,
     {Pkt, State};
 user_send_packet(Acc) ->
@@ -130,13 +139,13 @@ user_send_packet(Acc) ->
 
 -spec user_receive_packet({stanza(), ejabberd_c2s:state()}) -> {stanza(), ejabberd_c2s:state()}.
 user_receive_packet({#presence{from = From, type = available} = Pkt,
-		     #{lserver := LServer} = State}) ->
+		     #{lserver := LServer, jid := To} = State}) ->
     IsRemote = not ejabberd_router:is_my_host(From#jid.lserver),
     if IsRemote ->
 	   case read_caps(Pkt) of
 	     nothing -> ok;
 	     #caps{version = Version, exts = Exts} = Caps ->
-		    feature_request(LServer, From, Caps, [Version | Exts])
+		    feature_request(LServer, To, From, Caps, [Version | Exts])
 	   end;
        true -> ok
     end,
@@ -145,16 +154,15 @@ user_receive_packet(Acc) ->
     Acc.
 
 -spec caps_stream_features([xmpp_element()], binary()) -> [xmpp_element()].
-
 caps_stream_features(Acc, MyHost) ->
     case gen_mod:is_loaded(MyHost, ?MODULE) of
 	true ->
-    case make_my_disco_hash(MyHost) of
+	    case make_my_disco_hash(MyHost) of
 		<<"">> ->
 		    Acc;
-      Hash ->
+		Hash ->
 		    [#caps{hash = <<"sha-1">>, node = ?EJABBERD_URI,
-			   version = Hash}|Acc]
+			   version = Hash} | Acc]
 	    end;
 	false ->
 	    Acc
@@ -203,11 +211,14 @@ disco_info(Acc, _, _, _Node, _Lang) ->
 -spec c2s_presence_in(ejabberd_c2s:state(), presence()) -> ejabberd_c2s:state().
 c2s_presence_in(C2SState,
 		#presence{from = From, to = To, type = Type} = Presence) ->
-    {Subscription, _} = ejabberd_hooks:run_fold(
-			  roster_get_jid_info, To#jid.lserver,
-			  {none, []}, [To#jid.luser, To#jid.lserver, From]),
+    {Subscription, _, _} = ejabberd_hooks:run_fold(
+			     roster_get_jid_info, To#jid.lserver,
+			     {none, none, []},
+			     [To#jid.luser, To#jid.lserver, From]),
+    ToSelf = (From#jid.luser == To#jid.luser)
+	       and (From#jid.lserver == To#jid.lserver),
     Insert = (Type == available)
-	       and ((Subscription == both) or (Subscription == to)),
+	       and ((Subscription == both) or (Subscription == from) or ToSelf),
     Delete = (Type == unavailable) or (Type == error),
     if Insert or Delete ->
 	   LFrom = jid:tolower(From),
@@ -248,30 +259,12 @@ reload(Host, NewOpts, OldOpts) ->
        true ->
 	    ok
     end,
-    case gen_mod:is_equal_opt(cache_size, NewOpts, OldOpts,
-			      ejabberd_config:cache_size(Host)) of
-	{false, MaxSize, _} ->
-	    ets_cache:setopts(caps_features_cache, [{max_size, MaxSize}]),
-	    ets_cache:setopts(caps_requests_cache, [{max_size, MaxSize}]);
-	true ->
-	    ok
-    end,
-    case gen_mod:is_equal_opt(cache_life_time, NewOpts, OldOpts,
-			      ejabberd_config:cache_life_time(Host)) of
-	{false, Time, _} ->
-	    LifeTime = case Time of
-			   infinity -> infinity;
-			   _ -> timer:seconds(Time)
-		       end,
-	    ets_cache:setopts(caps_features_cache, [{life_time, LifeTime}]);
-	true ->
-	    ok
-    end.
+    init_cache(NewMod, Host, NewOpts).
 
 init([Host, Opts]) ->
     process_flag(trap_exit, true),
     Mod = gen_mod:db_mod(Host, Opts, ?MODULE),
-    init_cache(Host, Opts),
+    init_cache(Mod, Host, Opts),
     Mod:init(Host, Opts),
     ejabberd_hooks:add(c2s_presence_in, Host, ?MODULE,
 		       c2s_presence_in, 75),
@@ -298,7 +291,12 @@ handle_call(_Req, _From, State) ->
 
 handle_cast(_Msg, State) -> {noreply, State}.
 
-handle_info(_Info, State) -> {noreply, State}.
+handle_info({iq_reply, IQReply, {Host, From, To, Caps, SubNodes}}, State) ->
+    feature_response(IQReply, Host, From, To, Caps, SubNodes),
+    {noreply, State};
+handle_info(Info, State) ->
+    ?WARNING_MSG("unexpected info: ~p", [Info]),
+    {noreply, State}.
 
 terminate(_Reason, State) ->
     Host = State#state.host,
@@ -322,39 +320,44 @@ terminate(_Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
--spec feature_request(binary(), jid(), caps(), [binary()]) -> any().
-feature_request(Host, From, Caps,
+-spec feature_request(binary(), jid(), jid(), caps(), [binary()]) -> any().
+feature_request(Host, From, To, Caps,
 		[SubNode | Tail] = SubNodes) ->
     Node = Caps#caps.node,
     NodePair = {Node, SubNode},
-    case ets_cache:lookup(caps_features_cache, NodePair,
-			  caps_read_fun(Host, NodePair)) of
+    Mod = gen_mod:db_mod(Host, ?MODULE),
+    Res = case use_cache(Mod, Host) of
+	      true ->
+		  ets_cache:lookup(caps_features_cache, NodePair,
+				   caps_read_fun(Host, NodePair));
+	      false ->
+		  Mod:caps_read(Host, NodePair)
+	  end,
+    case Res of
 	{ok, Fs} when is_list(Fs) ->
-	    feature_request(Host, From, Caps, Tail);
+	    feature_request(Host, From, To, Caps, Tail);
 	_ ->
-	    LFrom = jid:tolower(From),
-	    case ets_cache:insert_new(caps_requests_cache, {LFrom, NodePair}, ok) of
+	    LTo = jid:tolower(To),
+	    case ets_cache:insert_new(caps_requests_cache, {LTo, NodePair}, ok) of
 		true ->
 		    IQ = #iq{type = get,
-			     from = jid:make(Host),
-			     to = From,
+			     from = From,
+			     to = To,
 			     sub_els = [#disco_info{node = <<Node/binary, "#",
 							     SubNode/binary>>}]},
-		    F = fun (IQReply) ->
-				feature_response(IQReply, Host, From, Caps,
-						 SubNodes)
-			end,
-		    ejabberd_local:route_iq(IQ, F);
+		    ejabberd_router:route_iq(
+		      IQ, {Host, From, To, Caps, SubNodes},
+		      gen_mod:get_module_proc(Host, ?MODULE));
 		false ->
 		    ok
 	    end,
-	    feature_request(Host, From, Caps, Tail)
+	    feature_request(Host, From, To, Caps, Tail)
     end;
-feature_request(_Host, _From, _Caps, []) -> ok.
+feature_request(_Host, _From, _To, _Caps, []) -> ok.
 
--spec feature_response(iq(), binary(), ljid(), caps(), [binary()]) -> any().
+-spec feature_response(iq(), binary(), jid(), jid(), caps(), [binary()]) -> any().
 feature_response(#iq{type = result, sub_els = [El]},
-		 Host, From, Caps, [SubNode | SubNodes]) ->
+		 Host, From, To, Caps, [SubNode | SubNodes]) ->
     NodePair = {Caps#caps.node, SubNode},
     try
 	DiscoInfo = xmpp:decode(El),
@@ -365,7 +368,12 @@ feature_response(#iq{type = result, sub_els = [El]},
 		Mod = gen_mod:db_mod(LServer, ?MODULE),
 		case Mod:caps_write(LServer, NodePair, Features) of
 		    ok ->
-			ets_cache:delete(caps_features_cache, NodePair);
+			case use_cache(Mod, LServer) of
+			    true ->
+				ets_cache:delete(caps_features_cache, NodePair);
+			    false ->
+				ok
+			end;
 		    {error, _} ->
 			ok
 		end;
@@ -374,10 +382,10 @@ feature_response(#iq{type = result, sub_els = [El]},
     catch _:{xmpp_codec, _Why} ->
 	    ok
     end,
-    feature_request(Host, From, Caps, SubNodes);
-feature_response(_IQResult, Host, From, Caps,
+    feature_request(Host, From, To, Caps, SubNodes);
+feature_response(_IQResult, Host, From, To, Caps,
 		 [_SubNode | SubNodes]) ->
-    feature_request(Host, From, Caps, SubNodes).
+    feature_request(Host, From, To, Caps, SubNodes).
 
 -spec caps_read_fun(binary(), {binary(), binary()})
       -> fun(() -> {ok, [binary()] | non_neg_integer()} | error).
@@ -473,29 +481,29 @@ is_valid_node(Node) ->
             false
     end.
 
-init_cache(Host, Opts) ->
-    CacheOpts = cache_opts(Host, Opts),
-    case use_cache(Host, Opts) of
+init_cache(Mod, Host, Opts) ->
+    CacheOpts = cache_opts(Opts),
+    case use_cache(Mod, Host) of
 	true ->
 	    ets_cache:new(caps_features_cache, CacheOpts);
 	false ->
-	    ok
+	    ets_cache:delete(caps_features_cache)
     end,
     CacheSize = proplists:get_value(max_size, CacheOpts),
     ets_cache:new(caps_requests_cache,
 		  [{max_size, CacheSize},
 		   {life_time, timer:seconds(?BAD_HASH_LIFETIME)}]).
 
-use_cache(Host, Opts) ->
-    gen_mod:get_opt(use_cache, Opts, ejabberd_config:use_cache(Host)).
+use_cache(Mod, Host) ->
+    case erlang:function_exported(Mod, use_cache, 1) of
+	true -> Mod:use_cache(Host);
+	false -> gen_mod:get_module_opt(Host, ?MODULE, use_cache)
+    end.
 
-cache_opts(Host, Opts) ->
-    MaxSize = gen_mod:get_opt(cache_size, Opts,
-			      ejabberd_config:cache_size(Host)),
-    CacheMissed = gen_mod:get_opt(cache_missed, Opts,
-				  ejabberd_config:cache_missed(Host)),
-    LifeTime = case gen_mod:get_opt(cache_life_time, Opts,
-				    ejabberd_config:cache_life_time(Host)) of
+cache_opts(Opts) ->
+    MaxSize = gen_mod:get_opt(cache_size, Opts),
+    CacheMissed = gen_mod:get_opt(cache_missed, Opts),
+    LifeTime = case gen_mod:get_opt(cache_life_time, Opts) of
 		   infinity -> infinity;
 		   I -> timer:seconds(I)
 	       end,
@@ -542,6 +550,11 @@ mod_opt_type(O) when O == cache_life_time; O == cache_size ->
     end;
 mod_opt_type(O) when O == use_cache; O == cache_missed ->
     fun (B) when is_boolean(B) -> B end;
-mod_opt_type(db_type) -> fun(T) -> ejabberd_config:v_db(?MODULE, T) end;
-mod_opt_type(_) ->
-    [cache_life_time, cache_size, use_cache, cache_missed, db_type].
+mod_opt_type(db_type) -> fun(T) -> ejabberd_config:v_db(?MODULE, T) end.
+
+mod_options(Host) ->
+    [{db_type, ejabberd_config:default_db(Host, ?MODULE)},
+     {use_cache, ejabberd_config:use_cache(Host)},
+     {cache_size, ejabberd_config:cache_size(Host)},
+     {cache_missed, ejabberd_config:cache_missed(Host)},
+     {cache_life_time, ejabberd_config:cache_life_time(Host)}].

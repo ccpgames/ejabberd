@@ -5,7 +5,7 @@
 %%% Created :  8 May 2014 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2013-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2013-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -20,8 +20,9 @@
 %%% You should have received a copy of the GNU General Public License along
 %%% with this program; if not, write to the Free Software Foundation, Inc.,
 %%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-
+%%%
 %%%-------------------------------------------------------------------
+
 -module(ejabberd_stun).
 
 -protocol({rfc, 5766}).
@@ -76,7 +77,7 @@ prepare_turn_opts(Opts) ->
     prepare_turn_opts(Opts, UseTurn).
 
 prepare_turn_opts(Opts, _UseTurn = false) ->
-    Opts;
+    set_certfile(Opts);
 prepare_turn_opts(Opts, _UseTurn = true) ->
     NumberOfMyHosts = length(?MYHOSTS),
     case proplists:get_value(turn_ip, Opts) of
@@ -108,8 +109,28 @@ prepare_turn_opts(Opts, _UseTurn = true) ->
 		    []
 	    end,
     MaxRate = shaper:get_max_rate(Shaper),
-    Realm ++ [{auth_fun, AuthFun},{shaper, MaxRate} |
-	      lists:keydelete(shaper, 1, Opts)].
+    Opts1 = Realm ++ [{auth_fun, AuthFun},{shaper, MaxRate} |
+		      lists:keydelete(shaper, 1, Opts)],
+    set_certfile(Opts1).
+
+set_certfile(Opts) ->
+    case lists:keymember(certfile, 1, Opts) of
+	true ->
+	    Opts;
+	false ->
+	    Realm = proplists:get_value(auth_realm, Opts, ?MYNAME),
+	    case ejabberd_pkix:get_certfile(Realm) of
+		{ok, CertFile} ->
+		    [{certfile, CertFile}|Opts];
+		error ->
+		    case ejabberd_config:get_option({domain_certfile, Realm}) of
+			undefined ->
+			    Opts;
+			CertFile ->
+			    [{certfile, CertFile}|Opts]
+		    end
+	    end
+    end.
 
 listen_opt_type(use_turn) ->
     fun(B) when is_boolean(B) -> B end;
@@ -130,6 +151,8 @@ listen_opt_type(tls) ->
     fun(B) when is_boolean(B) -> B end;
 listen_opt_type(certfile) ->
     fun(S) ->
+	    %% We cannot deprecate the option for now:
+	    %% I think STUN/TURN clients are too stupid to set SNI
 	    ejabberd_pkix:add_certfile(S),
 	    iolist_to_binary(S)
     end;
@@ -149,8 +172,10 @@ listen_opt_type(turn_max_permissions) ->
     end;
 listen_opt_type(server_name) ->
     fun iolist_to_binary/1;
+listen_opt_type(backlog) ->
+    fun(I) when is_integer(I), I>0 -> I end;
 listen_opt_type(_) ->
     [shaper, auth_type, auth_realm, tls, certfile, turn_min_port,
      turn_max_port, turn_max_allocations, turn_max_permissions,
-     server_name].
+     server_name, backlog].
 -endif.

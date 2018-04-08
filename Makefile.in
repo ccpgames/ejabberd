@@ -46,6 +46,15 @@ SODIR = $(PRIVDIR)/lib
 # /usr/lib/ejabberd/priv/msgs
 MSGSDIR = $(PRIVDIR)/msgs
 
+# /usr/lib/ejabberd/priv/css
+CSSDIR = $(PRIVDIR)/css
+
+# /usr/lib/ejabberd/priv/img
+IMGDIR = $(PRIVDIR)/img
+
+# /usr/lib/ejabberd/priv/js
+JSDIR = $(PRIVDIR)/js
+
 # /usr/lib/ejabberd/priv/sql
 SQLDIR = $(PRIVDIR)/sql
 
@@ -76,6 +85,11 @@ else
   CHOWN_OUTPUT=&1
   INIT_USER=$(INSTALLUSER)
 endif
+# if no group was enabled, don't set privileges or ownership
+INSTALLGROUP=@INSTALLGROUP@
+ifneq ($(INSTALLGROUP),)
+  G_USER=-g $(INSTALLGROUP)
+endif
 
 all: deps src
 
@@ -84,9 +98,11 @@ deps: deps/.got
 deps/.got:
 	rm -rf deps/.got
 	rm -rf deps/.built
+	mkdir -p deps
 	$(REBAR) get-deps && :> deps/.got
 
 deps/.built: deps/.got
+	$(REBAR) configure-deps
 	$(REBAR) compile && :> deps/.built
 
 src: deps/.built
@@ -123,36 +139,41 @@ FILES_WILDCARD=$(call FILTER_DIRS,$(foreach w,$(1),$(wildcard $(w))))
 
 ifeq ($(MAKECMDGOALS),copy-files-sub)
 
-DEPS:=$(sort $(shell $(REBAR) -q list-deps|$(SED) -e '/[a-z0-9_-]+\s/d;s/ .*//'))
+DEPS:=$(sort $(shell $(REBAR) -q list-deps|$(SED) -ne '/ TAG / s/ .*// p; / REV / s/ .*// p; / BRANCH / s/ .*// p'))
 
 DEPS_FILES=$(call FILES_WILDCARD,$(foreach DEP,$(DEPS),deps/$(DEP)/ebin/*.beam deps/$(DEP)/ebin/*.app deps/$(DEP)/priv/* deps/$(DEP)/priv/lib/* deps/$(DEP)/priv/bin/* deps/$(DEP)/include/*.hrl deps/$(DEP)/COPY* deps/$(DEP)/LICENSE* deps/$(DEP)/lib/*/ebin/*.beam deps/$(DEP)/lib/*/ebin/*.app))
-DEPS_FILES_FILTERED=$(filter-out %/epam %/eimp deps/elixir/ebin/elixir.app,$(DEPS_FILES))
+
+BINARIES=deps/epam/priv/bin/epam deps/eimp/priv/bin/eimp deps/fs/priv/mac_listener
+
+DEPS_FILES_FILTERED=$(filter-out $(BINARIES) deps/elixir/ebin/elixir.app,$(DEPS_FILES))
 DEPS_DIRS=$(sort deps/ $(foreach DEP,$(DEPS),deps/$(DEP)/) $(dir $(DEPS_FILES)))
 
-MAIN_FILES=$(filter-out %/configure.beam,$(call FILES_WILDCARD,ebin/*.beam ebin/*.app priv/msgs/*.msg priv/lib/* include/*.hrl COPYING))
+MAIN_FILES=$(filter-out %/configure.beam,$(call FILES_WILDCARD,ebin/*.beam ebin/*.app priv/msgs/*.msg priv/css/*.css priv/img/*.png priv/js/*.js priv/lib/* include/*.hrl COPYING))
 MAIN_DIRS=$(sort $(dir $(MAIN_FILES)) priv/bin priv/sql)
 
 define DEP_VERSION_template
 DEP_$(1)_VERSION:=$(shell $(SED) -e '/vsn/!d;s/.*, *"/$(1)-/;s/".*//' $(2) 2>/dev/null)
 endef
 
+DELETE_TARGET_SO=$(if $(subst X.soX,,X$(suffix $(1))X),,rm -f $(call TO_DEST,$(1));)
+
 $(foreach DEP,$(DEPS),$(eval $(call DEP_VERSION_template,$(DEP),deps/$(DEP)/ebin/$(DEP).app)))
 $(eval $(call DEP_VERSION_template,ejabberd,ebin/ejabberd.app))
 
 define COPY_template
-$(call TO_DEST,$(1)): $(1) $(call TO_DEST,$(dir $(1))) ; $$(INSTALL) -m 644 $(1) $(call TO_DEST,$(1))
+$(call TO_DEST,$(1)): $(1) $(call TO_DEST,$(dir $(1))) ; $(call DELETE_TARGET_SO, $(1)) $$(INSTALL) -m 644 $(1) $(call TO_DEST,$(1))
+endef
+
+define COPY_BINARY_template
+$(call TO_DEST,$(1)): $(1) $(call TO_DEST,$(dir $(1))) ; rm -f $(call TO_DEST,$(1)); $$(INSTALL) -m 755 $$(O_USER) $(1) $(call TO_DEST,$(1))
 endef
 
 $(foreach file,$(DEPS_FILES_FILTERED) $(MAIN_FILES),$(eval $(call COPY_template,$(file))))
 
+$(foreach file,$(BINARIES),$(eval $(call COPY_BINARY_template,$(file))))
+
 $(sort $(call TO_DEST,$(MAIN_DIRS) $(DEPS_DIRS))):
 	$(INSTALL) -d $@
-
-$(call TO_DEST,deps/epam/priv/bin/epam): $(LIBDIR)/%: deps/epam/priv/bin/epam $(call TO_DEST,deps/epam/priv/bin/)
-	$(INSTALL) -m 750 $(O_USER) $< $@
-
-$(call TO_DEST,deps/eimp/priv/bin/eimp): $(LIBDIR)/%: deps/eimp/priv/bin/eimp $(call TO_DEST,deps/eimp/priv/bin/)
-	$(INSTALL) -m 755 $(O_USER) $< $@
 
 $(call TO_DEST,priv/sql/lite.sql): sql/lite.sql $(call TO_DEST,priv/sql)
 	$(INSTALL) -m 644 $< $@
@@ -161,6 +182,8 @@ $(call TO_DEST,priv/bin/captcha.sh): tools/captcha.sh $(call TO_DEST,priv/bin)
 	$(INSTALL) -m 755 $(O_USER) $< $@
 
 copy-files-sub2: $(call TO_DEST,$(DEPS_FILES) $(MAIN_FILES) priv/bin/captcha.sh priv/sql/lite.sql)
+
+.PHONY: $(call TO_DEST,$(DEPS_FILES) $(MAIN_DIRS) $(DEPS_DIRS))
 
 endif
 
@@ -250,8 +273,14 @@ uninstall-binary:
 	rm -fr $(PBINDIR)
 	rm -f  $(SODIR)/*.so
 	rm -fr $(SODIR)
-	rm -f  $(MSGSDIR)/*.msgs
+	rm -f  $(MSGSDIR)/*.msg
 	rm -fr $(MSGSDIR)
+	rm -f  $(CSSDIR)/*.css
+	rm -fr $(CSSDIR)
+	rm -f  $(IMGDIR)/*.png
+	rm -fr $(IMGDIR)
+	rm -f  $(JSDIR)/*.js
+	rm -fr $(JSDIR)
 	rm -f  $(SQLDIR)/*.sql
 	rm -fr $(SQLDIR)
 	rm -fr $(PRIVDIR)

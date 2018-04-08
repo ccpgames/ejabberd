@@ -47,11 +47,11 @@ defmodule EjabberdModAdminExtraTest do
 		rescue
 			_ -> :ok
 		end
+    :ok = :ejabberd_config.start(["domain"], [])
+    :gen_mod.start_link
 		:acl.start_link
 		:ejabberd_access_permissions.start_link()
 		:ejabberd_commands.start_link
-        :ok = :ejabberd_config.start([@domain], [])
-        :gen_mod.start_link
 		:mod_admin_extra.start(@domain, [])
 		:sel_application.start_app(:moka)
 		:ejabberd_hooks.start_link
@@ -232,6 +232,7 @@ defmodule EjabberdModAdminExtraTest do
 
 	###################### Roster
 
+  @tag :skip
 	test "add_rosteritem and delete_rosteritem work" do
 		# Connect user
 		# Add user1 & user2 to user's roster
@@ -323,7 +324,8 @@ defmodule EjabberdModAdminExtraTest do
 
 	end
 
-	test "get_roster works" do
+  @tag :skip
+  test "get_roster works" do
 		assert [] == ModRosterMock.get_roster(@user, @domain)
 		assert [] == call_command(:get_roster, [@user, @domain],
 																										:admin)

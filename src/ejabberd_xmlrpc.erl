@@ -5,7 +5,7 @@
 %%% Created : 21 Aug 2007 by Badlop <badlop@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -581,5 +581,9 @@ listen_opt_type(maxsessions) ->
     fun(I) when is_integer(I), I>0 -> I end;
 listen_opt_type(timeout) ->
     fun(I) when is_integer(I), I>0 -> I end;
+listen_opt_type(inet) -> fun(B) when is_boolean(B) -> B end;
+listen_opt_type(inet6) -> fun(B) when is_boolean(B) -> B end;
+listen_opt_type(backlog) ->
+    fun(I) when is_integer(I), I>0 -> I end;
 listen_opt_type(_) ->
-    [access_commands, maxsessions, timeout].
+    [access_commands, maxsessions, timeout, backlog, inet, inet6].

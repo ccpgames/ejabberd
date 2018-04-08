@@ -102,10 +102,10 @@ CREATE TABLE archive (
 ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE FULLTEXT INDEX i_text ON archive(txt);
-CREATE INDEX i_username_timestamp USING BTREE ON archive(username,timestamp);
+CREATE INDEX i_username_timestamp USING BTREE ON archive(username(191), timestamp);
+CREATE INDEX i_username_peer USING BTREE ON archive(username(191), peer(191));
+CREATE INDEX i_username_bare_peer USING BTREE ON archive(username(191), bare_peer(191));
 CREATE INDEX i_timestamp USING BTREE ON archive(timestamp);
-CREATE INDEX i_peer USING BTREE ON archive(peer);
-CREATE INDEX i_bare_peer USING BTREE ON archive(bare_peer);
 
 CREATE TABLE archive_prefs (
     username varchar(191) NOT NULL PRIMARY KEY,
@@ -215,7 +215,7 @@ CREATE TABLE pubsub_node (
   host text NOT NULL,
   node text NOT NULL,
   parent VARCHAR(191) NOT NULL DEFAULT '',
-  type text NOT NULL,
+  plugin text NOT NULL,
   nodeid bigint auto_increment primary key
 ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE INDEX i_pubsub_node_parent ON pubsub_node(parent(120));
@@ -306,6 +306,18 @@ CREATE TABLE muc_online_users (
 CREATE UNIQUE INDEX i_muc_online_users USING BTREE ON muc_online_users(username(75), server(75), resource(75), name(75), host(75));
 CREATE INDEX i_muc_online_users_us USING BTREE ON muc_online_users(username(75), server(75));
 
+CREATE TABLE muc_room_subscribers (
+   room varchar(191) NOT NULL,
+   host varchar(191) NOT NULL,
+   jid varchar(191) NOT NULL,
+   nick text NOT NULL,
+   nodes text NOT NULL,
+   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY i_muc_room_subscribers_host_room_jid (host, room, jid)
+) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE INDEX i_muc_room_subscribers_host_jid USING BTREE ON muc_room_subscribers(host, jid);
+
 CREATE TABLE irc_custom (
     jid text NOT NULL,
     host text NOT NULL,
@@ -391,3 +403,14 @@ CREATE TABLE proxy65 (
 
 CREATE UNIQUE INDEX i_proxy65_sid ON proxy65 (sid(191));
 CREATE INDEX i_proxy65_jid ON proxy65 (jid_i(191));
+
+CREATE TABLE push_session (
+    username text NOT NULL,
+    timestamp bigint NOT NULL,
+    service text NOT NULL,
+    node text NOT NULL,
+    xml text NOT NULL
+);
+
+CREATE UNIQUE INDEX i_push_usn ON push_session (username(191), service(191), node(191));
+CREATE UNIQUE INDEX i_push_ut ON push_session (username(191), timestamp);

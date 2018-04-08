@@ -5,7 +5,7 @@
 %%% Created : 23 Apr 2014 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2014-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2014-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -20,8 +20,9 @@
 %%% You should have received a copy of the GNU General Public License along
 %%% with this program; if not, write to the Free Software Foundation, Inc.,
 %%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-
+%%%
 %%%-------------------------------------------------------------------
+
 -module(mod_sip_registrar).
 
 -ifndef(SIP).
@@ -45,8 +46,6 @@
 
 -define(CALL_TIMEOUT, timer:seconds(30)).
 -define(DEFAULT_EXPIRES, 3600).
--define(FLOW_TIMEOUT_UDP, 29).
--define(FLOW_TIMEOUT_TCP, 120).
 
 -record(sip_session, {us = {<<"">>, <<"">>} :: {binary(), binary()},
 		      socket = #sip_socket{} :: #sip_socket{},
@@ -496,12 +495,10 @@ get_flow_timeout(LServer, #sip_socket{type = Type}) ->
     case Type of
 	udp ->
 	    gen_mod:get_module_opt(
-	      LServer, mod_sip, flow_timeout_udp,
-	      ?FLOW_TIMEOUT_UDP);
+	      LServer, mod_sip, flow_timeout_udp);
 	_ ->
 	    gen_mod:get_module_opt(
-	      LServer, mod_sip, flow_timeout_tcp,
-	      ?FLOW_TIMEOUT_TCP)
+	      LServer, mod_sip, flow_timeout_tcp)
     end.
 
 update_table() ->

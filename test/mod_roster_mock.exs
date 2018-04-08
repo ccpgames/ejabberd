@@ -45,9 +45,9 @@ defmodule ModRosterMock do
 		:ejabberd_mnesia.create(:mod_roster_mnesia, :roster_version,
 			[ram_copies: [node()],
 			 attributes: Keyword.keys(roster_version(roster_version()))])
-		#:mod_roster.stop(domain)
-		:mod_roster.start(domain, [])
-	end
+    #:mod_roster.stop(domain)
+    :gen_mod.start_module(domain, :mod_roster)
+  end
 
 	def mock_with_moka(module) do
 		try do
@@ -62,7 +62,7 @@ defmodule ModRosterMock do
 
 			roster_mock0 = :moka.start(:mod_roster)
 			:moka.replace(roster_mock0, :gen_iq_handler, :add_iq_handler,
-				fn (_module, _host, _ns, _m, _f, _iqdisc)  ->
+				fn (_module, _host, _ns, _m, _f)  ->
 					:ok
 				end)
 

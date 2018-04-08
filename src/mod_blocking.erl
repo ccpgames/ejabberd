@@ -5,7 +5,7 @@
 %%% Created : 24 Aug 2008 by Stephan Maka <stephan@spaceboyz.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -29,8 +29,8 @@
 
 -protocol({xep, 191, '1.2'}).
 
--export([start/2, stop/1, reload/3, process_iq/1, mod_opt_type/1, depends/2,
-	 disco_features/5]).
+-export([start/2, stop/1, reload/3, process_iq/1, depends/2,
+	 disco_features/5, mod_options/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -39,24 +39,17 @@
 
 -include("mod_privacy.hrl").
 
-start(Host, Opts) ->
-    IQDisc = gen_mod:get_opt(iqdisc, Opts, gen_iq_handler:iqdisc(Host)),
+start(Host, _Opts) ->
     ejabberd_hooks:add(disco_local_features, Host, ?MODULE, disco_features, 50),
     gen_iq_handler:add_iq_handler(ejabberd_sm, Host,
-				  ?NS_BLOCKING, ?MODULE, process_iq, IQDisc).
+				  ?NS_BLOCKING, ?MODULE, process_iq).
 
 stop(Host) ->
     ejabberd_hooks:delete(disco_local_features, Host, ?MODULE, disco_features, 50),
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_BLOCKING).
 
-reload(Host, NewOpts, OldOpts) ->
-    case gen_mod:is_equal_opt(iqdisc, NewOpts, OldOpts, gen_iq_handler:iqdisc(Host)) of
-	{false, IQDisc, _} ->
-	    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_BLOCKING,
-					  ?MODULE, process_iq, IQDisc);
-	true ->
-	    ok
-    end.
+reload(_Host, _NewOpts, _OldOpts) ->
+    ok.
 
 depends(_Host, _Opts) ->
     [{mod_privacy, hard}].
@@ -241,10 +234,11 @@ process_unblock(#iq{from = From} = IQ, LJIDs) ->
 
 -spec broadcast_event(jid(), block() | unblock()) -> ok.
 broadcast_event(#jid{luser = LUser, lserver = LServer} = From, Event) ->
+    BFrom = jid:remove_resource(From),
     lists:foreach(
       fun(R) ->
 	      To = jid:replace_resource(From, R),
-	      IQ = #iq{type = set, from = From, to = To,
+	      IQ = #iq{type = set, from = BFrom, to = To,
 		       id = <<"push", (randoms:get_string())/binary>>,
 		       sub_els = [Event]},
 	      ejabberd_router:route(IQ)
@@ -267,5 +261,5 @@ err_db_failure(#iq{lang = Lang} = IQ) ->
     Txt = <<"Database failure">>,
     xmpp:make_error(IQ, xmpp:err_internal_server_error(Txt, Lang)).
 
-mod_opt_type(iqdisc) -> fun gen_iq_handler:check_type/1;
-mod_opt_type(_) -> [iqdisc].
+mod_options(_Host) ->
+    [].

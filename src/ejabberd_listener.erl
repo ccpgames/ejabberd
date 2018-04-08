@@ -5,7 +5,7 @@
 %%% Created : 16 Nov 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -107,7 +107,7 @@ init_udp(PortIP, Module, Opts, SockOpts, Port, IPS) ->
 			     {reuseaddr, true} |
 			     SockOpts]) of
 	{ok, Socket} ->
-	    %% Inform my parent that this port was opened succesfully
+	    %% Inform my parent that this port was opened successfully
 	    proc_lib:init_ack({ok, self()}),
 	    application:ensure_started(ejabberd),
 	    start_module_sup(Port, Module),
@@ -133,7 +133,7 @@ init_udp(PortIP, Module, Opts, SockOpts, Port, IPS) ->
 
 init_tcp(PortIP, Module, Opts, SockOpts, Port, IPS) ->
     ListenSocket = listen_tcp(PortIP, Module, SockOpts, Port, IPS),
-    %% Inform my parent that this port was opened succesfully
+    %% Inform my parent that this port was opened successfully
     proc_lib:init_ack({ok, self()}),
     application:ensure_started(ejabberd),
     start_module_sup(Port, Module),
@@ -294,7 +294,7 @@ accept(ListenSocket, Module, Opts, Interval) ->
 	{ok, Socket} ->
 	    case {inet:sockname(Socket), inet:peername(Socket)} of
 		{{ok, {Addr, Port}}, {ok, {PAddr, PPort}}} ->
-		    Receiver = case ejabberd_socket:start(Module,
+		    Receiver = case xmpp_socket:start(Module,
 							  gen_tcp, Socket, Opts) of
 				   {ok, RecvPid} -> RecvPid;
 				   _ -> none
@@ -572,10 +572,18 @@ transform_options({listen, LOpts}, Opts) ->
 transform_options(Opt, Opts) ->
     [Opt|Opts].
 
+known_listen_options(Module) ->
+    try Module:listen_options() of
+	Opts -> [element(1, Opt) || Opt <- Opts]
+    catch _:undef ->
+	    Module:listen_opt_type('')
+    end.
+
 -spec validate_module_options(module(), [{atom(), any()}]) -> [{atom(), any()}].
 validate_module_options(Module, Opts) ->
-    try Module:listen_opt_type('') of
+    try known_listen_options(Module) of
 	_ ->
+	    maybe_start_zlib(Opts),
 	    lists:filtermap(
 	      fun({Opt, Val}) ->
 		      case validate_module_option(Module, Opt, Val) of
@@ -606,6 +614,11 @@ validate_module_option(Module, Opt, Val) ->
 			       [Opt, Val]),
 		    error
 	    end;
+	[] ->
+	    ?ERROR_MSG("unknown listen option '~s' for '~s' will be likely "
+		       "ignored because the listening module doesn't have "
+		       "any options", [Opt, Module]),
+	    {ok, Val};
 	KnownOpts when is_list(KnownOpts) ->
 	    ?ERROR_MSG("unknown listen option '~s' for '~s' will be likely "
 		       "ignored, available options are: ~s",
@@ -657,6 +670,14 @@ all_zero_ip(Opts) ->
     case proplists:get_bool(inet6, Opts) of
 	true -> {0,0,0,0,0,0,0,0};
 	false -> {0,0,0,0}
+    end.
+
+maybe_start_zlib(Opts) ->
+    case proplists:get_bool(zlib, Opts) of
+	true ->
+	    ejabberd:start_app(ezlib);
+	false ->
+	    ok
     end.
 
 opt_type(listen) -> fun validate_cfg/1;

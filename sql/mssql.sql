@@ -38,16 +38,16 @@ CREATE TABLE [dbo].[archive] (
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)
 ) TEXTIMAGE_ON [PRIMARY];
 
-CREATE INDEX [archive_username] ON [archive] (username)
+CREATE INDEX [archive_username_timestamp] ON [archive] (username, timestamp)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
+
+CREATE INDEX [archive_username_peer] ON [archive] (username, peer)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
+
+CREATE INDEX [archive_username_bare_peer] ON [archive] (username, bare_peer)
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
 
 CREATE INDEX [archive_timestamp] ON [archive] (timestamp)
-WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
-
-CREATE INDEX [archive_peer] ON [archive] (peer)
-WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
-
-CREATE INDEX [archive_bare_peer] ON [archive] (bare_peer)
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
 
 CREATE TABLE [dbo].[archive_prefs] (
@@ -148,6 +148,18 @@ CREATE UNIQUE CLUSTERED INDEX [muc_online_users_i] ON [muc_online_users] (userna
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
 CREATE UNIQUE CLUSTERED INDEX [muc_online_users_us] ON [muc_online_users] (username, server);
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
+
+CREATE TABLE [dbo].[muc_room_subscribers] (
+        [room] [varchar] (191) NOT NULL,
+        [host] [varchar] (191) NOT NULL,
+        [jid] [varchar] (191) NOT NULL,
+        [nick] [text] NOT NULL,
+        [nodes] [text] NOT NULL,
+        [created_at] [datetime] NOT NULL DEFAULT GETDATE()
+);
+
+CREATE UNIQUE CLUSTERED INDEX [muc_room_subscribers_host_room_jid] ON [muc_room_subscribers] (host, room, jid);
+CREATE INDEX [muc_room_subscribers_host_jid] ON [muc_room_subscribers] (host, jid);
 
 CREATE TABLE [dbo].[privacy_default_list] (
         [username] [varchar] (250) NOT NULL,
@@ -267,7 +279,7 @@ CREATE TABLE [dbo].[pubsub_node] (
         [host] [varchar] (255) NOT NULL,
         [node] [varchar] (255) NOT NULL,
         [parent] [varchar] (255) NOT NULL DEFAULT '',
-        [type] [text] NOT NULL,
+        [plugin] [text] NOT NULL,
         [nodeid] [bigint] IDENTITY(1,1) NOT NULL,
  CONSTRAINT [pubsub_node_PRIMARY] PRIMARY KEY CLUSTERED 
 (
@@ -540,4 +552,18 @@ CREATE UNIQUE CLUSTERED INDEX [carboncopy_ur] ON [carboncopy] (username, resourc
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
 
 CREATE INDEX [carboncopy_user] ON [carboncopy] (username)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
+
+CREATE TABLE [dbo].[push_session] (
+    [username] [varchar] (255) NOT NULL,
+    [timestamp] [bigint] NOT NULL,
+    [service] [varchar] (255) NOT NULL,
+    [node] [varchar] (255) NOT NULL,
+    [xml] [varchar] (255) NOT NULL
+);
+
+CREATE UNIQUE CLUSTERED INDEX [i_push_usn] ON [push_session] (username, service, node)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);
+
+CREATE UNIQUE CLUSTERED INDEX [i_push_ut] ON [push_session] (username, timestamp)
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON);

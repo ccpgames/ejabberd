@@ -5,7 +5,7 @@
 %%% Created : 17 Jul 2008 by Pablo Polvorin <pablo.polvorin@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -277,7 +277,7 @@ get_roster(User, Server) ->
 get_private(User, Server) ->
     case mod_private:get_data(User, Server) of
         [_|_] = Els ->
-	    [xmpp:encode(#private{xml_els = Els})];
+	    [xmpp:encode(#private{sub_els = Els})];
         _ ->
             []
     end.

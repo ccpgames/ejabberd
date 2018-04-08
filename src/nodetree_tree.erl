@@ -5,7 +5,7 @@
 %%% Created :  1 Dec 2007 by Christophe Romain <christophe.romain@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -86,15 +86,26 @@ get_nodes(Host, _From) ->
 get_nodes(Host) ->
     mnesia:match_object(#pubsub_node{nodeid = {Host, '_'}, _ = '_'}).
 
-get_parentnodes(_Host, _Node, _From) ->
-    [].
-
-%% @doc <p>Default node tree does not handle parents, return a list
-%% containing just this node.</p>
-get_parentnodes_tree(Host, Node, _From) ->
+get_parentnodes(Host, Node, _From) ->
     case catch mnesia:read({pubsub_node, {Host, Node}}) of
-	[Record] when is_record(Record, pubsub_node) -> [{0, [Record]}];
-	_ -> []
+	[Record] when is_record(Record, pubsub_node) ->
+	    Record#pubsub_node.parents;
+	_ ->
+	    []
+    end.
+
+get_parentnodes_tree(Host, Node, _From) ->
+    get_parentnodes_tree(Host, Node, 0, []).
+get_parentnodes_tree(Host, Node, Level, Acc) ->
+    case catch mnesia:read({pubsub_node, {Host, Node}}) of
+	[Record] when is_record(Record, pubsub_node) ->
+	    Tree = [{Level, [Record]}|Acc],
+	    case Record#pubsub_node.parents of
+		[Parent] -> get_parentnodes_tree(Host, Parent, Level+1, Tree);
+		_ -> Tree
+	    end;
+	_ ->
+	    Acc
     end.
 
 get_subnodes(Host, Node, _From) ->

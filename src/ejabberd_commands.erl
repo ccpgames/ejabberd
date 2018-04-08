@@ -5,7 +5,7 @@
 %%% Created : 20 May 2008 by Badlop <badlop@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -259,9 +259,9 @@ get_commands_spec() ->
                                         "documentation should be stored",
                                         "Regexp matching names of commands or modules "
                                         "that will be included inside generated document",
-                                        "Comma separated list of languages (choosen from java, perl, xmlrpc, json)"
+                                        "Comma separated list of languages (chosen from java, perl, xmlrpc, json)"
                                         "that will have example invocation include in markdown document"],
-                           result_desc = "0 if command failed, 1 when succedded",
+                           result_desc = "0 if command failed, 1 when succeeded",
                            args_example = ["/home/me/docs/api.html", "mod_admin", "java,json"],
                            result_example = ok},
         #ejabberd_commands{name = gen_markdown_doc_for_commands, tags = [documentation],
@@ -273,9 +273,9 @@ get_commands_spec() ->
                                         "documentation should be stored",
                                         "Regexp matching names of commands or modules "
                                         "that will be included inside generated document",
-                                        "Comma separated list of languages (choosen from java, perl, xmlrpc, json)"
+                                        "Comma separated list of languages (chosen from java, perl, xmlrpc, json)"
                                         "that will have example invocation include in markdown document"],
-                           result_desc = "0 if command failed, 1 when succedded",
+                           result_desc = "0 if command failed, 1 when succeeded",
                            args_example = ["/home/me/docs/api.html", "mod_admin", "java,json"],
                            result_example = ok}].
 

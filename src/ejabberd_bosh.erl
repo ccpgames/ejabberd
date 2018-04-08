@@ -5,7 +5,7 @@
 %%% Created : 20 Jul 2011 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -33,7 +33,7 @@
 -export([start/2, start/3, start_link/3]).
 
 -export([send_xml/2, setopts/2, controlling_process/2,
-	 migrate/3, custom_receiver/1, become_controller/2,
+	 migrate/3, become_controller/2,
 	 reset_stream/1, change_shaper/2, monitor/1, close/1,
 	 sockname/1, peername/1, process_request/3, send/2,
 	 change_controller/2]).
@@ -71,15 +71,11 @@
 -define(NS_HTTP_BIND,
 	<<"http://jabber.org/protocol/httpbind">>).
 
--define(DEFAULT_MAXPAUSE, 120).
-
 -define(DEFAULT_WAIT, 300).
 
 -define(DEFAULT_HOLD, 1).
 
 -define(DEFAULT_POLLING, 2).
-
--define(DEFAULT_INACTIVITY, 30).
 
 -define(MAX_SHAPED_REQUESTS_QUEUE_LEN, 1000).
 
@@ -102,7 +98,7 @@
          inactivity_timer                         :: reference() | undefined,
          wait_timer                               :: reference() | undefined,
 	 wait_timeout = ?DEFAULT_WAIT             :: timeout(),
-         inactivity_timeout = ?DEFAULT_INACTIVITY :: timeout(),
+         inactivity_timeout                       :: timeout(),
 	 prev_rid = 0                             :: non_neg_integer(),
          prev_key = <<"">>                        :: binary(),
          prev_poll                                :: erlang:timestamp() | undefined,
@@ -175,9 +171,6 @@ setopts({http_bind, FsmRef, _IP}, Opts) ->
 
 controlling_process(_Socket, _Pid) -> ok.
 
-custom_receiver({http_bind, FsmRef, _IP}) ->
-    {receiver, ?MODULE, FsmRef}.
-
 become_controller(FsmRef, C2SPid) ->
     p1_fsm:send_all_state_event(FsmRef,
 				    {become_controller, C2SPid}).
@@ -185,11 +178,11 @@ become_controller(FsmRef, C2SPid) ->
 change_controller({http_bind, FsmRef, _IP}, C2SPid) ->
     become_controller(FsmRef, C2SPid).
 
-reset_stream({http_bind, _FsmRef, _IP}) -> ok.
+reset_stream({http_bind, _FsmRef, _IP} = Socket) ->
+    Socket.
 
 change_shaper({http_bind, FsmRef, _IP}, Shaper) ->
-    p1_fsm:send_all_state_event(FsmRef,
-				    {change_shaper, Shaper}).
+    p1_fsm:send_all_state_event(FsmRef, {change_shaper, Shaper}).
 
 monitor({http_bind, FsmRef, _IP}) ->
     erlang:monitor(process, FsmRef).
@@ -297,7 +290,7 @@ init([#body{attrs = Attrs}, IP, SID]) ->
     XMPPVer = get_attr('xmpp:version', Attrs),
     XMPPDomain = get_attr(to, Attrs),
     {InBuf, Opts} = case gen_mod:get_module_opt(
-                           XMPPDomain, mod_bosh, prebind, false) of
+                           XMPPDomain, mod_bosh, prebind) of
                         true ->
                             JID = make_random_jid(XMPPDomain),
                             {buf_new(XMPPDomain), [{jid, JID} | Opts2]};
@@ -306,13 +299,11 @@ init([#body{attrs = Attrs}, IP, SID]) ->
                                     buf_new(XMPPDomain)),
                              Opts2}
 		    end,
-    ejabberd_socket:start(ejabberd_c2s, ?MODULE, Socket,
-			  Opts),
+    xmpp_socket:start(ejabberd_c2s, ?MODULE, Socket,
+		      [{receiver, self()}|Opts]),
     Inactivity = gen_mod:get_module_opt(XMPPDomain,
-					mod_bosh, max_inactivity,
-					?DEFAULT_INACTIVITY),
-    MaxConcat = gen_mod:get_module_opt(XMPPDomain, mod_bosh, max_concat,
-                                       unlimited),
+					mod_bosh, max_inactivity),
+    MaxConcat = gen_mod:get_module_opt(XMPPDomain, mod_bosh, max_concat),
     ShapedReceivers = buf_new(XMPPDomain, ?MAX_SHAPED_REQUESTS_QUEUE_LEN),
     State = #state{host = XMPPDomain, sid = SID, ip = IP,
 		   xmpp_ver = XMPPVer, el_ibuf = InBuf,
@@ -357,8 +348,7 @@ wait_for_session(#body{attrs = Attrs} = Req, From,
 			     true -> {undefined, []}
 			  end,
     MaxPause = gen_mod:get_module_opt(State#state.host,
-				      mod_bosh, max_pause,
-                                      ?DEFAULT_MAXPAUSE),
+				      mod_bosh, max_pause),
     Resp = #body{attrs =
 		     [{sid, State#state.sid}, {wait, Wait},
 		      {ver, ?BOSH_VERSION}, {polling, ?DEFAULT_POLLING},
@@ -749,9 +739,10 @@ bounce_receivers(State, Reason) ->
 		State, Receivers ++ ShapedReceivers).
 
 bounce_els_from_obuf(State) ->
+    Opts = ejabberd_config:codec_options(State#state.host),
     p1_queue:foreach(
       fun({xmlstreamelement, El}) ->
-	      try xmpp:decode(El, ?NS_CLIENT, [ignore_els]) of
+	      try xmpp:decode(El, ?NS_CLIENT, Opts) of
 		  Pkt when ?is_stanza(Pkt) ->
 		      case {xmpp:get_from(Pkt), xmpp:get_to(Pkt)} of
 			  {#jid{}, #jid{}} ->
@@ -1031,8 +1022,7 @@ buf_new(Host) ->
 
 buf_new(Host, Limit) ->
     QueueType = gen_mod:get_module_opt(
-		  Host, mod_bosh, queue_type,
-		  ejabberd_config:default_queue_type(Host)),
+		  Host, mod_bosh, queue_type),
     p1_queue:new(QueueType, Limit).
 
 buf_in(Xs, Buf) ->

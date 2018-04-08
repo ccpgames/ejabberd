@@ -6,7 +6,7 @@
 %%% Author:  Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -64,7 +64,7 @@ parse(L) ->
 %%%           RFC2254_Filter = RegExp = Value = string(),
 %%%           N = integer().
 %%%
-%%% Description: The same as parse/1, but substitutes N or all occurences
+%%% Description: The same as parse/1, but substitutes N or all occurrences
 %%%              of RegExp with Value *after* parsing.
 %%%
 %%% Example:

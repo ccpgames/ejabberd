@@ -5,7 +5,7 @@
 %%% Created :  8 Dec 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -37,18 +37,17 @@
 	 c2s_unauthenticated_packet/2, try_register/5,
 	 process_iq/1, send_registration_notifications/3,
 	 transform_options/1, transform_module_options/1,
-	 mod_opt_type/1, opt_type/1, depends/2]).
+	 mod_opt_type/1, mod_options/1, opt_type/1, depends/2]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
 -include("xmpp.hrl").
 
-start(Host, Opts) ->
-    IQDisc = gen_mod:get_opt(iqdisc, Opts, gen_iq_handler:iqdisc(Host)),
+start(Host, _Opts) ->
     gen_iq_handler:add_iq_handler(ejabberd_local, Host,
-				  ?NS_REGISTER, ?MODULE, process_iq, IQDisc),
+				  ?NS_REGISTER, ?MODULE, process_iq),
     gen_iq_handler:add_iq_handler(ejabberd_sm, Host,
-				  ?NS_REGISTER, ?MODULE, process_iq, IQDisc),
+				  ?NS_REGISTER, ?MODULE, process_iq),
     ejabberd_hooks:add(c2s_pre_auth_features, Host, ?MODULE,
 		       stream_feature_register, 50),
     ejabberd_hooks:add(c2s_unauthenticated_packet, Host,
@@ -68,34 +67,20 @@ stop(Host) ->
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host,
 				     ?NS_REGISTER).
 
-reload(Host, NewOpts, OldOpts) ->
-    case gen_mod:is_equal_opt(iqdisc, NewOpts, OldOpts, gen_iq_handler:iqdisc(Host)) of
-	{false, IQDisc, _} ->
-	    gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_REGISTER,
-					  ?MODULE, process_iq, IQDisc),
-	    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_REGISTER,
-					  ?MODULE, process_iq, IQDisc);
-	true ->
-	    ok
-    end.
+reload(_Host, _NewOpts, _OldOpts) ->
+    ok.
 
 depends(_Host, _Opts) ->
     [].
 
 -spec stream_feature_register([xmpp_element()], binary()) -> [xmpp_element()].
-stream_feature_register(Acc, Host) ->
-    AF = gen_mod:get_module_opt(Host, ?MODULE, access_from, all),
-    case (AF /= none) of
-	true ->
-	    [#feature_register{}|Acc];
-	false ->
-	    Acc
-    end.
+stream_feature_register(Acc, _Host) ->
+    [#feature_register{}|Acc].
 
 c2s_unauthenticated_packet(#{ip := IP, server := Server} = State,
 			   #iq{type = T, sub_els = [_]} = IQ)
   when T == set; T == get ->
-    case xmpp:get_subtag(IQ, #register{}) of
+    try xmpp:try_subtag(IQ, #register{}) of
 	#register{} = Register ->
 	    {Address, _} = IP,
 	    IQ1 = xmpp:set_els(IQ, [Register]),
@@ -105,6 +90,11 @@ c2s_unauthenticated_packet(#{ip := IP, server := Server} = State,
 	    {stop, ejabberd_c2s:send(State, ResIQ1)};
 	false ->
 	    State
+    catch _:{xmpp_codec, Why} ->
+	    Txt = xmpp:io_format_error(Why),
+	    Lang = maps:get(lang, State),
+	    Err = xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang)),
+	    {stop, ejabberd_c2s:send(State, Err)}
     end;
 c2s_unauthenticated_packet(State, _) ->
     State.
@@ -114,13 +104,12 @@ process_iq(#iq{from = From} = IQ) ->
 
 process_iq(#iq{from = From, to = To} = IQ, Source) ->
     IsCaptchaEnabled =
-	case gen_mod:get_module_opt(To#jid.lserver, ?MODULE,
-				    captcha_protected, false) of
+	case gen_mod:get_module_opt(To#jid.lserver, ?MODULE, captcha_protected) of
 	    true -> true;
 	    false -> false
 	end,
     Server = To#jid.lserver,
-    Access = gen_mod:get_module_opt(Server, ?MODULE, access_remove, all),
+    Access = gen_mod:get_module_opt(Server, ?MODULE, access_remove),
     AllowRemove = allow == acl:match_rule(Server, Access, From),
     process_iq(IQ, Source, IsCaptchaEnabled, AllowRemove).
 
@@ -210,7 +199,7 @@ process_iq(#iq{type = get, from = From, to = To, id = ID, lang = Lang} = IQ,
     Instr = translate:translate(
 	      Lang, <<"Choose a username and password to register "
 		      "with this server">>),
-    URL = gen_mod:get_module_opt(Server, ?MODULE, redirect_url, <<"">>),
+    URL = gen_mod:get_module_opt(Server, ?MODULE, redirect_url),
     if (URL /= <<"">>) and not IsRegistered ->
 	    Txt = translate:translate(Lang, <<"To register, visit ~s">>),
 	    Desc = str:format(Txt, [URL]),
@@ -317,7 +306,7 @@ try_register(User, Server, Password, SourceRaw, Lang) ->
       false -> {error, xmpp:err_bad_request(<<"Malformed username">>, Lang)};
       _ ->
 	  JID = jid:make(User, Server),
-	  Access = gen_mod:get_module_opt(Server, ?MODULE, access, all),
+	  Access = gen_mod:get_module_opt(Server, ?MODULE, access),
 	  IPAccess = get_ip_access(Server),
 	  case {acl:match_rule(Server, Access, JID),
 		check_ip_access(SourceRaw, IPAccess)}
@@ -334,6 +323,11 @@ try_register(User, Server, Password, SourceRaw, Lang) ->
 							    Password)
 				of
 			      ok ->
+				  ?INFO_MSG("The account ~s was registered "
+					    "from IP address ~s",
+					    [jid:encode({User, Server, <<"">>}),
+					     ejabberd_config:may_hide_data(
+					       ip_to_string(Source))]),
 				  send_welcome_message(JID),
 				  send_registration_notifications(
                                     ?MODULE, JID, Source),
@@ -381,8 +375,7 @@ try_register(User, Server, Password, SourceRaw, Lang) ->
 
 send_welcome_message(JID) ->
     Host = JID#jid.lserver,
-    case gen_mod:get_module_opt(Host, ?MODULE, welcome_message,
-				{<<"">>, <<"">>}) of
+    case gen_mod:get_module_opt(Host, ?MODULE, welcome_message) of
       {<<"">>, <<"">>} -> ok;
       {Subj, Body} ->
 	  ejabberd_router:route(
@@ -395,7 +388,7 @@ send_welcome_message(JID) ->
 
 send_registration_notifications(Mod, UJID, Source) ->
     Host = UJID#jid.lserver,
-    case gen_mod:get_module_opt(Host, Mod, registration_watchers, []) of
+    case gen_mod:get_module_opt(Host, ?MODULE, registration_watchers) of
         [] -> ok;
         JIDs when is_list(JIDs) ->
             Body =
@@ -403,8 +396,9 @@ send_registration_notifications(Mod, UJID, Source) ->
                                                "IP address ~s on node ~w using ~p.",
                                                [get_time_string(),
                                                 jid:encode(UJID),
-                                                ip_to_string(Source), node(),
-                                                Mod])),
+						ejabberd_config:may_hide_data(
+						  ip_to_string(Source)),
+						node(), Mod])),
             lists:foreach(
               fun(JID) ->
                       ejabberd_router:route(
@@ -419,7 +413,7 @@ check_from(#jid{user = <<"">>, server = <<"">>},
 	   _Server) ->
     allow;
 check_from(JID, Server) ->
-    Access = gen_mod:get_module_opt(Server, ?MODULE, access_from, none),
+    Access = gen_mod:get_module_opt(Server, ?MODULE, access_from),
     acl:match_rule(Server, Access, JID).
 
 check_timeout(undefined) -> true;
@@ -492,6 +486,8 @@ remove_timeout(Source) ->
        true -> ok
     end.
 
+ip_to_string({_, _, _} = USR) ->
+    jid:encode(USR);
 ip_to_string(Source) when is_tuple(Source) ->
     misc:ip_to_list(Source);
 ip_to_string(undefined) -> <<"undefined">>;
@@ -521,7 +517,7 @@ is_strong_password(Server, Password) ->
 
 is_strong_password2(Server, Password) ->
     LServer = jid:nameprep(Server),
-    case gen_mod:get_module_opt(LServer, ?MODULE, password_strength, 0) of
+    case gen_mod:get_module_opt(LServer, ?MODULE, password_strength) of
         0 ->
             true;
         Entropy ->
@@ -585,7 +581,7 @@ may_remove_resource({_, _, _} = From) ->
 may_remove_resource(From) -> From.
 
 get_ip_access(Host) ->
-    gen_mod:get_module_opt(Host, ?MODULE, ip_access, all).
+    gen_mod:get_module_opt(Host, ?MODULE, ip_access).
 
 check_ip_access({User, Server, Resource}, IPAccess) ->
     case ejabberd_sm:get_user_ip(User, Server, Resource) of
@@ -605,7 +601,6 @@ mod_opt_type(access_remove) -> fun acl:access_rules_validator/1;
 mod_opt_type(captcha_protected) ->
     fun (B) when is_boolean(B) -> B end;
 mod_opt_type(ip_access) -> fun acl:access_rules_validator/1;
-mod_opt_type(iqdisc) -> fun gen_iq_handler:check_type/1;
 mod_opt_type(password_strength) ->
     fun (N) when is_number(N), N >= 0 -> N end;
 mod_opt_type(registration_watchers) ->
@@ -622,11 +617,20 @@ mod_opt_type({welcome_message, subject}) ->
 mod_opt_type({welcome_message, body}) ->
     fun iolist_to_binary/1;
 mod_opt_type(redirect_url) ->
-    fun iolist_to_binary/1;
-mod_opt_type(_) ->
-    [access, access_from, access_remove, captcha_protected, ip_access,
-     iqdisc, password_strength, registration_watchers, redirect_url,
-     {welcome_message, subject}, {welcome_message, body}].
+    fun iolist_to_binary/1.
+
+mod_options(_Host) ->
+    [{access, all},
+     {access_from, none},
+     {access_remove, all},
+     {captcha_protected, false},
+     {ip_access, all},
+     {password_strength, 0},
+     {registration_watchers, []},
+     {redirect_url, <<"">>},
+     {welcome_message,
+      [{subject, <<"">>},
+       {body, <<"">>}]}].
 
 -spec opt_type(registration_timeout) -> fun((timeout()) -> timeout());
 	      (atom()) -> [atom()].

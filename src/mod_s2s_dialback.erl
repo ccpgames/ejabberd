@@ -2,7 +2,7 @@
 %%% Created : 16 Dec 2016 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -26,7 +26,7 @@
 -protocol({xep, 185, '1.0'}).
 
 %% gen_mod API
--export([start/2, stop/1, reload/3, depends/2, mod_opt_type/1]).
+-export([start/2, stop/1, reload/3, depends/2, mod_options/1]).
 %% Hooks
 -export([s2s_out_auth_result/2, s2s_out_downgraded/2,
 	 s2s_in_packet/2, s2s_out_packet/2, s2s_in_recv/3,
@@ -97,7 +97,7 @@ reload(Host, NewOpts, _OldOpts) ->
 depends(_Host, _Opts) ->
     [].
 
-mod_opt_type(_) ->
+mod_options(_Host) ->
     [].
 
 s2s_in_features(Acc, _) ->
@@ -121,13 +121,14 @@ s2s_out_init(Acc, _Opts) ->
 
 s2s_out_closed(#{server := LServer,
 		 remote_server := RServer,
+		 lang := Lang,
 		 db_verify := {StreamID, _Key, _Pid}} = State, Reason) ->
     %% Outbound s2s verificating connection (created at step 1) is
     %% closed suddenly without receiving the response.
     %% Building a response on our own
     Response = #db_verify{from = RServer, to = LServer,
 			  id = StreamID, type = error,
-			  sub_els = [mk_error(Reason)]},
+			  sub_els = [mk_error(Reason, Lang)]},
     s2s_out_packet(State, Response);
 s2s_out_closed(State, _Reason) ->
     State.
@@ -139,14 +140,13 @@ s2s_out_auth_result(#{db_verify := _} = State, _) ->
     %% in section 2.1.2, step 2
     {stop, send_verify_request(State)};
 s2s_out_auth_result(#{db_enabled := true,
-		      sockmod := SockMod,
 		      socket := Socket, ip := IP,
 		      server := LServer,
 		      remote_server := RServer} = State, {false, _}) ->
     %% SASL authentication has failed, retrying with dialback
     %% Sending dialback request, section 2.1.1, step 1
     ?INFO_MSG("(~s) Retrying with s2s dialback authentication: ~s -> ~s (~s)",
-	      [SockMod:pp(Socket), LServer, RServer,
+	      [xmpp_socket:pp(Socket), LServer, RServer,
 	       ejabberd_config:may_hide_data(misc:ip_to_list(IP))]),
     State1 = maps:remove(stop_reason, State#{on_route => queue}),
     {stop, send_db_request(State1)};
@@ -159,7 +159,6 @@ s2s_out_downgraded(#{db_verify := _} = State, _) ->
     %% section 2.1.2, step 2
     {stop, send_verify_request(State)};
 s2s_out_downgraded(#{db_enabled := true,
-		     sockmod := SockMod,
 		     socket := Socket, ip := IP,
 		     server := LServer,
 		     remote_server := RServer} = State, _) ->
@@ -167,13 +166,13 @@ s2s_out_downgraded(#{db_enabled := true,
     %% section 2.1.1, step 1
     ?INFO_MSG("(~s) Trying s2s dialback authentication with "
 	      "non-RFC compliant server: ~s -> ~s (~s)",
-	      [SockMod:pp(Socket), LServer, RServer,
+	      [xmpp_socket:pp(Socket), LServer, RServer,
 	       ejabberd_config:may_hide_data(misc:ip_to_list(IP))]),
     {stop, send_db_request(State)};
 s2s_out_downgraded(State, _) ->
     State.
 
-s2s_in_packet(#{stream_id := StreamID} = State,
+s2s_in_packet(#{stream_id := StreamID, lang := Lang} = State,
 	      #db_result{from = From, to = To, key = Key, type = undefined}) ->
     %% Received dialback request, section 2.2.1, step 1
     try
@@ -188,7 +187,7 @@ s2s_in_packet(#{stream_id := StreamID} = State,
 	    {stop,
 	     send_db_result(State,
 			    #db_verify{from = From, to = To, type = error,
-				       sub_els = [mk_error(Reason)]})}
+				       sub_els = [mk_error(Reason, Lang)]})}
     end;
 s2s_in_packet(State, #db_verify{to = To, from = From, key = Key,
 				id = StreamID, type = undefined}) ->
@@ -206,7 +205,7 @@ s2s_in_packet(State, Pkt) when is_record(Pkt, db_result);
 s2s_in_packet(State, _) ->
     State.
 
-s2s_in_recv(State, El, {error, Why}) ->
+s2s_in_recv(#{lang := Lang} = State, El, {error, Why}) ->
     case xmpp:get_name(El) of
 	Tag when Tag == <<"db:result">>;
 		 Tag == <<"db:verify">> ->
@@ -214,7 +213,7 @@ s2s_in_recv(State, El, {error, Why}) ->
 		T when T /= <<"valid">>,
 		       T /= <<"invalid">>,
 		       T /= <<"error">> ->
-		    Err = xmpp:make_error(El, mk_error({codec_error, Why})),
+		    Err = xmpp:make_error(El, mk_error({codec_error, Why}, Lang)),
 		    {stop, ejabberd_s2s_in:send(State, Err)};
 		_ ->
 		    State
@@ -318,25 +317,24 @@ check_from_to(From, To) ->
     	    end
     end.
 
--spec mk_error(term()) -> stanza_error().
-mk_error(forbidden) ->
-    xmpp:err_forbidden(<<"Access denied by service policy">>, ?MYLANG);
-mk_error(host_unknown) ->
-    xmpp:err_not_allowed(<<"Host unknown">>, ?MYLANG);
-mk_error({codec_error, Why}) ->
-    xmpp:err_bad_request(xmpp:io_format_error(Why), ?MYLANG);
-mk_error({_Class, _Reason} = Why) ->
+-spec mk_error(term(), binary()) -> stanza_error().
+mk_error(forbidden, Lang) ->
+    xmpp:err_forbidden(<<"Access denied by service policy">>, Lang);
+mk_error(host_unknown, Lang) ->
+    xmpp:err_not_allowed(<<"Host unknown">>, Lang);
+mk_error({codec_error, Why}, Lang) ->
+    xmpp:err_bad_request(xmpp:io_format_error(Why), Lang);
+mk_error({_Class, _Reason} = Why, Lang) ->
     Txt = xmpp_stream_out:format_error(Why),
-    xmpp:err_remote_server_not_found(Txt, ?MYLANG);
-mk_error(_) ->
+    xmpp:err_remote_server_not_found(Txt, Lang);
+mk_error(_, _) ->
     xmpp:err_internal_server_error().
 
 -spec format_error(db_result()) -> binary().
 format_error(#db_result{type = invalid}) ->
     <<"invalid dialback key">>;
-format_error(#db_result{type = error, sub_els = Els}) ->
-    %% TODO: improve xmpp.erl
-    case xmpp:get_error(#message{sub_els = Els}) of
+format_error(#db_result{type = error} = Result) ->
+    case xmpp:get_error(Result) of
 	#stanza_error{} = Err ->
 	    format_stanza_error(Err);
 	undefined ->
@@ -353,9 +351,9 @@ format_stanza_error(#stanza_error{reason = Reason, text = Txt}) ->
 		 #redirect{} -> <<"redirect">>;
 		 _ -> erlang:atom_to_binary(Reason, latin1)
 	     end,
-    case Txt of
-	undefined -> Slogan;
-	#text{data = <<"">>} -> Slogan;
-	#text{data = Data} ->
+    case xmpp:get_text(Txt) of
+	<<"">> ->
+	    Slogan;
+	Data ->
 	    <<Data/binary, " (", Slogan/binary, ")">>
     end.

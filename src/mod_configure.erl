@@ -5,7 +5,7 @@
 %%% Created : 19 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,7 +35,7 @@
 	 get_local_features/5, get_local_items/5,
 	 adhoc_local_items/4, adhoc_local_commands/4,
 	 get_sm_identity/5, get_sm_features/5, get_sm_items/5,
-	 adhoc_sm_items/4, adhoc_sm_commands/4, mod_opt_type/1,
+	 adhoc_sm_items/4, adhoc_sm_commands/4, mod_options/1,
 	 depends/2]).
 
 -include("ejabberd.hrl").
@@ -1528,8 +1528,11 @@ set_form(From, Host, ?NS_ADMINL(<<"add-user">>), _Lang,
     true = lists:member(Server, ?MYHOSTS),
     true = Server == Host orelse
 	     get_permission_level(From) == global,
-    ejabberd_auth:try_register(User, Server, Password),
-    {result, undefined};
+    case ejabberd_auth:try_register(User, Server, Password) of
+	ok -> {result, undefined};
+	{error, exists} -> {error, xmpp:err_conflict()};
+	{error, not_allowed} -> {error, xmpp:err_not_allowed()}
+    end;
 set_form(From, Host, ?NS_ADMINL(<<"delete-user">>),
 	 _Lang, XData) ->
     AccountStringList = get_values(<<"accountjids">>,
@@ -1809,4 +1812,4 @@ set_sm_form(User, Server, <<"config">>,
 set_sm_form(_User, _Server, _Node, _Request) ->
     {error, xmpp:err_service_unavailable()}.
 
-mod_opt_type(_) -> [].
+mod_options(_) -> [].

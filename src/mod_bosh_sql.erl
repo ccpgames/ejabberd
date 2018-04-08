@@ -1,11 +1,28 @@
-%%%-------------------------------------------------------------------
-%%% @author Evgeny Khramtsov <ekhramtsov@process-one.net>
-%%% @copyright (C) 2017, Evgeny Khramtsov
-%%% @doc
-%%%
-%%% @end
+%%%----------------------------------------------------------------------
+%%% File    : mod_bosh_sql.erl
+%%% Author  : Evgeny Khramtsov <ekhramtsov@process-one.net>
+%%% Purpose : 
 %%% Created : 28 Mar 2017 by Evgeny Khramtsov <ekhramtsov@process-one.net>
-%%%-------------------------------------------------------------------
+%%%
+%%%
+%%% ejabberd, Copyright (C) 2017-2018   ProcessOne
+%%%
+%%% This program is free software; you can redistribute it and/or
+%%% modify it under the terms of the GNU General Public License as
+%%% published by the Free Software Foundation; either version 2 of the
+%%% License, or (at your option) any later version.
+%%%
+%%% This program is distributed in the hope that it will be useful,
+%%% but WITHOUT ANY WARRANTY; without even the implied warranty of
+%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+%%% General Public License for more details.
+%%%
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+%%%
+%%%----------------------------------------------------------------------
+
 -module(mod_bosh_sql).
 -behaviour(mod_bosh).
 
@@ -42,8 +59,7 @@ open_session(SID, Pid) ->
 		      "pid=%(PidS)s"]) of
 	ok ->
 	    ok;
-	Err ->
-	    ?ERROR_MSG("failed to update 'bosh' table: ~p", [Err]),
+	_Err ->
 	    {error, db_failure}
     end.
 
@@ -52,8 +68,7 @@ close_session(SID) ->
 	   ?MYNAME, ?SQL("delete from bosh where sid=%(SID)s")) of
 	{updated, _} ->
 	    ok;
-	Err ->
-	    ?ERROR_MSG("failed to delete from 'bosh' table: ~p", [Err]),
+	_Err ->
 	    {error, db_failure}
     end.
 
@@ -67,8 +82,7 @@ find_session(SID) ->
 	    end;
 	{selected, []} ->
 	    {error, notfound};
-	Err ->
-	    ?ERROR_MSG("failed to select 'bosh' table: ~p", [Err]),
+	_Err ->
 	    {error, db_failure}
     end.
 

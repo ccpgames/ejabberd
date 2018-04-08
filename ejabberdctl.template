@@ -11,6 +11,7 @@ INET_DIST_INTERFACE=""
 ERLANG_NODE=ejabberd@localhost
 
 # define default environment variables
+SCRIPT_DIR=$(cd "${0%/*}" && pwd)
 ERL="{{erl}}"
 IEX="{{bindir}}/iex"
 EPMD="{{epmd}}"
@@ -26,7 +27,7 @@ case $(id -un) in
             EXEC_CMD="as_install_user"
         else
             EXEC_CMD="as_current_user"
-            echo "WARNING: This is not recommended to run ejabberd as root" >&2
+            echo "WARNING: It is not recommended to run ejabberd as root" >&2
         fi
         ;;
     *)
@@ -109,7 +110,7 @@ export ERL_LIBS
 exec_cmd()
 {
     case $EXEC_CMD in
-        as_install_user) su -c '"$0" "$@"' "$INSTALLUSER" -- "$@" ;;
+        as_install_user) su -s /bin/sh -c '"$0" "$@"' "$INSTALLUSER" -- "$@" ;;
         as_current_user) "$@" ;;
     esac
 }
@@ -144,7 +145,7 @@ debugwarning()
         echo "To bypass permanently this warning, add to ejabberdctl.cfg the line:"
         echo "  EJABBERD_BYPASS_WARNINGS=true"
         echo "Press return to continue"
-        read -r
+        read -r input
         echo ""
     fi
 }
@@ -167,7 +168,7 @@ livewarning()
         echo "To bypass permanently this warning, add to ejabberdctl.cfg the line:"
         echo "  EJABBERD_BYPASS_WARNINGS=true"
         echo "Press return to continue"
-        read -r
+        read -r input
         echo ""
     fi
 }
@@ -262,7 +263,7 @@ cd "$SPOOL_DIR" || {
 case $1 in
     start)
         check_start
-        exec_erl "$ERLANG_NODE" $EJABBERD_OPTS -noinput -detached
+        exec_erl "$ERLANG_NODE" $EJABBERD_OPTS -detached
         ;;
     foreground)
         check_start

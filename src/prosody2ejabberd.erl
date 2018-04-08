@@ -4,7 +4,7 @@
 %%% Created : 20 Jan 2016 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -38,23 +38,30 @@
 %%% API
 %%%===================================================================
 from_dir(ProsodyDir) ->
-    case file:list_dir(ProsodyDir) of
-	{ok, HostDirs} ->
-	    lists:foreach(
-	      fun(HostDir) ->
-		      Host = list_to_binary(HostDir),
-		      lists:foreach(
-			fun(SubDir) ->
-				Path = filename:join(
-					 [ProsodyDir, HostDir, SubDir]),
-				convert_dir(Path, Host, SubDir)
-			end, ["vcard", "accounts", "roster",
-			      "private", "config", "offline",
-			      "privacy", "pep", "pubsub"])
-	      end, HostDirs);
-	{error, Why} = Err ->
-	    ?ERROR_MSG("failed to list ~s: ~s",
-		       [ProsodyDir, file:format_error(Why)]),
+    case code:ensure_loaded(luerl) of
+	{module, _} ->
+	    case file:list_dir(ProsodyDir) of
+		{ok, HostDirs} ->
+		    lists:foreach(
+		      fun(HostDir) ->
+			      Host = list_to_binary(HostDir),
+			      lists:foreach(
+				fun(SubDir) ->
+					Path = filename:join(
+						 [ProsodyDir, HostDir, SubDir]),
+					convert_dir(Path, Host, SubDir)
+				end, ["vcard", "accounts", "roster",
+				      "private", "config", "offline",
+				      "privacy", "pep", "pubsub"])
+		      end, HostDirs);
+		{error, Why} = Err ->
+		    ?ERROR_MSG("failed to list ~s: ~s",
+			       [ProsodyDir, file:format_error(Why)]),
+		    Err
+	    end;
+	{error, _} = Err ->
+	    ?INFO_MSG("The file 'luerl.beam' is not found: maybe "
+		      "ejabberd is not compiled with Lua support", []),
 	    Err
     end.
 
@@ -201,8 +208,10 @@ convert_data(Host, "offline", User, [Data]) ->
       fun({_, RawXML}) ->
 	      case deserialize(RawXML) of
 		  [El] ->
-		      Msg = el_to_offline_msg(LUser, LServer, El),
-		      ok = mod_offline:store_offline_msg(Msg);
+		      case el_to_offline_msg(LUser, LServer, El) of
+			  [Msg] -> ok = mod_offline:store_offline_msg(Msg);
+			  [] -> ok
+		      end;
 		  _ ->
 		      ok
 	      end

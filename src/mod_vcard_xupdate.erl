@@ -5,7 +5,7 @@
 %%% Created : 9 Mar 2007 by Igor Goryachev <igor@goryachev.org>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -24,14 +24,15 @@
 %%%----------------------------------------------------------------------
 
 -module(mod_vcard_xupdate).
-
 -behaviour(gen_mod).
+
+-protocol({xep, 398, '0.2.0'}).
 
 %% gen_mod callbacks
 -export([start/2, stop/1, reload/3]).
 
 -export([update_presence/1, vcard_set/1, remove_user/2,
-	 user_send_packet/1, mod_opt_type/1, depends/2]).
+	 user_send_packet/1, mod_opt_type/1, mod_options/1, depends/2]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -75,11 +76,18 @@ depends(_Host, _Opts) ->
       -> {presence(), ejabberd_c2s:state()}.
 update_presence({#presence{type = available} = Pres,
 		 #{jid := #jid{luser = LUser, lserver = LServer}} = State}) ->
-    Pres1 = case get_xupdate(LUser, LServer) of
-		undefined -> xmpp:remove_subtag(Pres, #vcard_xupdate{});
-		XUpdate -> xmpp:set_subtag(Pres, XUpdate)
-	    end,
-    {Pres1, State};
+    case xmpp:get_subtag(Pres, #vcard_xupdate{}) of
+	#vcard_xupdate{hash = <<>>} ->
+	    %% XEP-0398 forbids overwriting vcard:x:update
+	    %% tags with empty <photo/> element
+	    {Pres, State};
+	_ ->
+	    Pres1 = case get_xupdate(LUser, LServer) of
+			undefined -> xmpp:remove_subtag(Pres, #vcard_xupdate{});
+			XUpdate -> xmpp:set_subtag(Pres, XUpdate)
+		    end,
+	    {Pres1, State}
+    end;
 update_presence(Acc) ->
     Acc.
 
@@ -141,23 +149,17 @@ db_get_xupdate(LUser, LServer) ->
 init_cache(Host, Opts) ->
     case use_cache(Host) of
 	true ->
-	    CacheOpts = cache_opts(Host, Opts),
+	    CacheOpts = cache_opts(Opts),
 	    ets_cache:new(?VCARD_XUPDATE_CACHE, CacheOpts);
 	false ->
 	    ets_cache:delete(?VCARD_XUPDATE_CACHE)
     end.
 
--spec cache_opts(binary(), gen_mod:opts()) -> [proplists:property()].
-cache_opts(Host, Opts) ->
-    MaxSize = gen_mod:get_opt(
-		cache_size, Opts,
-		ejabberd_config:cache_size(Host)),
-    CacheMissed = gen_mod:get_opt(
-		    cache_missed, Opts,
-		    ejabberd_config:cache_missed(Host)),
-    LifeTime = case gen_mod:get_opt(
-		      cache_life_time, Opts,
-		      ejabberd_config:cache_life_time(Host)) of
+-spec cache_opts(gen_mod:opts()) -> [proplists:property()].
+cache_opts(Opts) ->
+    MaxSize = gen_mod:get_opt(cache_size, Opts),
+    CacheMissed = gen_mod:get_opt(cache_missed, Opts),
+    LifeTime = case gen_mod:get_opt(cache_life_time, Opts) of
 		   infinity -> infinity;
 		   I -> timer:seconds(I)
 	       end,
@@ -165,9 +167,7 @@ cache_opts(Host, Opts) ->
 
 -spec use_cache(binary()) -> boolean().
 use_cache(Host) ->
-    gen_mod:get_module_opt(
-      Host, ?MODULE, use_cache,
-      ejabberd_config:use_cache(Host)).
+    gen_mod:get_module_opt(Host, ?MODULE, use_cache).
 
 -spec compute_hash(xmlel()) -> binary() | external.
 compute_hash(VCard) ->
@@ -195,6 +195,10 @@ mod_opt_type(O) when O == cache_life_time; O == cache_size ->
         (infinity) -> infinity
     end;
 mod_opt_type(O) when O == use_cache; O == cache_missed ->
-    fun (B) when is_boolean(B) -> B end;
-mod_opt_type(_) ->
-    [cache_life_time, cache_size, use_cache, cache_missed].
+    fun (B) when is_boolean(B) -> B end.
+
+mod_options(Host) ->
+    [{use_cache, ejabberd_config:use_cache(Host)},
+     {cache_size, ejabberd_config:cache_size(Host)},
+     {cache_missed, ejabberd_config:cache_missed(Host)},
+     {cache_life_time, ejabberd_config:cache_life_time(Host)}].

@@ -108,7 +108,7 @@ test_configure(Config) ->
 			    [{title, NodeTitle}]),
     set_node_config(Config, Node, MyNodeConfig),
     NewNodeConfig = get_node_config(Config, Node),
-    NodeTitle = proplists:get_value(title, NewNodeConfig),
+    NodeTitle = proplists:get_value(title, NewNodeConfig, <<>>),
     disconnect(Config).
 
 test_default(Config) ->
@@ -122,7 +122,7 @@ test_create_configure(Config) ->
 				[{title, NodeTitle}]),
     Node = create_node(Config, <<>>, CustomNodeConfig),
     NodeConfig = get_node_config(Config, Node),
-    NodeTitle = proplists:get_value(title, NodeConfig),
+    NodeTitle = proplists:get_value(title, NodeConfig, <<>>),
     delete_node(Config, Node),
     disconnect(Config).
 
@@ -599,7 +599,7 @@ set_node_config(Config, Node, Options) ->
 publish_item(Config, Node) ->
     PJID = pubsub_jid(Config),
     ItemID = randoms:get_string(),
-    Item = #ps_item{id = ItemID, xml_els = [xmpp:encode(#presence{id = ItemID})]},
+    Item = #ps_item{id = ItemID, sub_els = [xmpp:encode(#presence{id = ItemID})]},
     case send_recv(Config,
 		   #iq{type = set, to = PJID,
 		       sub_els = [#pubsub{publish = #ps_publish{

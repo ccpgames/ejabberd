@@ -5,7 +5,7 @@
 %%% Created : 14 Dec 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -28,7 +28,6 @@
 
 -export([start/0, load_file/1, reload_file/0, read_file/1,
 	 get_option/1, get_option/2, add_option/2, has_option/1,
-	 get_vh_by_auth_method/1,
 	 get_version/0, get_myhosts/0, get_mylang/0, get_lang/1,
 	 get_ejabberd_config_path/0, is_using_elixir_config/0,
 	 prepare_opt_val/4, transform_options/1, collect_options/1,
@@ -37,7 +36,8 @@
 	 is_elixir_enabled/0, v_dbs/1, v_dbs_mods/1,
 	 default_db/1, default_db/2, default_ram_db/1, default_ram_db/2,
 	 default_queue_type/1, queue_dir/0, fsm_limit_opts/1,
-	 use_cache/1, cache_size/1, cache_missed/1, cache_life_time/1]).
+	 use_cache/1, cache_size/1, cache_missed/1, cache_life_time/1,
+	 codec_options/1, get_plain_terms_file/2, negotiation_timeout/0]).
 
 -export([start/2]).
 
@@ -71,8 +71,10 @@
 start() ->
     ConfigFile = get_ejabberd_config_path(),
     ?INFO_MSG("Loading configuration from ~s", [ConfigFile]),
-    p1_options:start_link(ejabberd_options),
-    p1_options:start_link(ejabberd_db_modules),
+    catch ets:new(ejabberd_options,
+		  [named_table, public, {read_concurrency, true}]),
+    catch ets:new(ejabberd_db_modules,
+		  [named_table, public, {read_concurrency, true}]),
     State1 = load_file(ConfigFile),
     UnixTime = p1_time_compat:system_time(seconds),
     SharedKey = case erlang:get_cookie() of
@@ -105,9 +107,21 @@ hosts_to_start(State) ->
 %% At the moment, these functions are mainly used to setup unit tests.
 -spec start(Hosts :: [binary()], Opts :: [acl:acl() | local_config()]) -> ok.
 start(Hosts, Opts) ->
-    p1_options:start_link(ejabberd_options),
-    p1_options:start_link(ejabberd_db_modules),
-    set_opts(set_hosts_in_options(Hosts, #state{opts = Opts})),
+    catch ets:new(ejabberd_options,
+		  [named_table, public, {read_concurrency, true}]),
+    catch ets:new(ejabberd_db_modules,
+		  [named_table, public, {read_concurrency, true}]),
+    UnixTime = p1_time_compat:system_time(seconds),
+    SharedKey = case erlang:get_cookie() of
+		    nocookie ->
+			str:sha(randoms:get_string());
+		    Cookie ->
+			str:sha(misc:atom_to_binary(Cookie))
+		end,
+    State1 = #state{opts = Opts},
+    State2 = set_option({node_start, global}, UnixTime, State1),
+    State3 = set_option({shared_key, global}, SharedKey, State2),
+    set_opts(set_hosts_in_options(Hosts, State3)),
     ok.
 
 %% @doc Get the filename of the ejabberd configuration file.
@@ -441,8 +455,7 @@ get_config_lines2(Fd, Data, CurrLine, [NextWanted | LNumbers], R) when is_list(D
 exit_or_halt(ExitText) ->
     case [Vsn || {ejabberd, _Desc, Vsn} <- application:which_applications()] of
 	[] ->
-	    timer:sleep(1000),
-	    halt(string:substr(ExitText, 1, 199));
+	    ejabberd:halt();
 	[_] ->
 	    exit(ExitText)
     end.
@@ -758,17 +771,12 @@ append_option({Opt, Host}, Val, State) ->
 
 set_opts(State) ->
     Opts = State#state.opts,
-    ets:select_delete(ejabberd_options,
-		      ets:fun2ms(
-			fun({{node_start, _}, _}) -> false;
-			   ({{shared_key, _}, _}) -> false;
-			   (_) -> true
-			end)),
-    lists:foreach(
-      fun(#local_config{key = {Opt, Host}, value = Val}) ->
-	      p1_options:insert(ejabberd_options, Opt, Host, Val)
-      end, Opts),
-    p1_options:compile(ejabberd_options),
+    ets:insert(
+      ejabberd_options,
+      lists:map(
+	fun(#local_config{key = Key, value = Val}) ->
+		{Key, Val}
+	end, Opts)),
     set_log_level().
 
 set_log_level() ->
@@ -784,8 +792,8 @@ add_local_option(Opt, Val) ->
 add_option(Opt, Val) when is_atom(Opt) ->
     add_option({Opt, global}, Val);
 add_option({Opt, Host}, Val) ->
-    p1_options:insert(ejabberd_options, Opt, Host, Val),
-    p1_options:compile(ejabberd_options).
+    ets:insert(ejabberd_options, {{Opt, Host}, Val}),
+    ok.
 
 -spec prepare_opt_val(any(), any(), check_fun(), any()) -> any().
 
@@ -862,13 +870,12 @@ get_option(Opt, Default) ->
 				       "format. This is likely a bug", [Opt]),
 			  {undefined, global}
 		  end,
-    case ejabberd_options:is_known(Key) of
-	true ->
-	    case ejabberd_options:Key(Host) of
-		{ok, Val} -> Val;
-		undefined -> Default
+    try ets:lookup_element(ejabberd_options, {Key, Host}, 2)
+    catch _:badarg when Host /= global ->
+	    try ets:lookup_element(ejabberd_options, {Key, global}, 2)
+	    catch _:badarg -> Default
 	    end;
-	false ->
+	  _:badarg ->
 	    Default
     end.
 
@@ -878,8 +885,8 @@ has_option(Opt) ->
 
 init_module_db_table(Modules) ->
     %% Dirty hack for mod_pubsub
-    p1_options:insert(ejabberd_db_modules, mod_pubsub, mnesia, true),
-    p1_options:insert(ejabberd_db_modules, mod_pubsub, sql, true),
+    ets:insert(ejabberd_db_modules, {{mod_pubsub, mnesia}, true}),
+    ets:insert(ejabberd_db_modules, {{mod_pubsub, sql}, true}),
     lists:foreach(
       fun(M) ->
 	      case re:split(atom_to_list(M), "_", [{return, list}]) of
@@ -891,14 +898,13 @@ init_module_db_table(Modules) ->
 		      BareMod = list_to_atom(string:join(lists:reverse(T), "_")),
 		      case is_behaviour(BareMod, M) of
 			  true ->
-			      p1_options:insert(ejabberd_db_modules,
-						BareMod, Suffix, true);
+			      ets:insert(ejabberd_db_modules,
+					 {{BareMod, Suffix}, true});
 			  false ->
 			      ok
 		      end
 	      end
-      end, Modules),
-    p1_options:compile(ejabberd_db_modules).
+      end, Modules).
 
 is_behaviour(Behav, Mod) ->
     try Mod:module_info(attributes) of
@@ -920,20 +926,20 @@ is_behaviour(Behav, Mod) ->
 v_db(Mod, internal) -> v_db(Mod, mnesia);
 v_db(Mod, odbc) -> v_db(Mod, sql);
 v_db(Mod, Type) ->
-    case ejabberd_db_modules:is_known(Mod) of
-	true ->
-	    case ejabberd_db_modules:Mod(Type) of
-		{ok, _} -> Type;
-		_ -> erlang:error(badarg)
-	    end;
-	false ->
-	    erlang:error(badarg)
+    case ets:member(ejabberd_db_modules, {Mod, Type}) of
+	true -> Type;
+	false -> erlang:error(badarg)
     end.
 
 -spec v_dbs(module()) -> [atom()].
 
 v_dbs(Mod) ->
-    ejabberd_db_modules:get_scope(Mod).
+    ets:select(
+      ejabberd_db_modules,
+      ets:fun2ms(
+	fun({{M, Type}, _}) when M == Mod ->
+		Type
+	end)).
 
 -spec v_dbs_mods(module()) -> [module()].
 
@@ -978,7 +984,19 @@ default_db(Opt, Host, Module) ->
 get_modules() ->
     {ok, Mods} = application:get_key(ejabberd, modules),
     ExtMods = [Name || {Name, _Details} <- ext_mod:installed()],
-    ExtMods ++ Mods.
+    case application:get_env(ejabberd, external_beams) of
+	{ok, Path} ->
+	    case lists:member(Path, code:get_path()) of
+		true -> ok;
+		false -> code:add_patha(Path)
+	    end,
+	    Beams = filelib:wildcard(filename:join(Path, "*\.beam")),
+	    CustMods = [list_to_atom(filename:rootname(filename:basename(Beam)))
+			|| Beam <- Beams],
+	    CustMods ++ ExtMods ++ Mods;
+	_ ->
+	    ExtMods ++ Mods
+    end.
 
 get_modules_with_options(Modules) ->
     lists:foldl(
@@ -1026,26 +1044,6 @@ validate_opts(#state{opts = Opts} = State, ModOpts) ->
 			end
 		end, Opts),
     State#state{opts = NewOpts}.
-
--spec get_vh_by_auth_method(atom()) -> [binary()].
-
-%% Return the list of hosts with a given auth method
-get_vh_by_auth_method(AuthMethod) ->
-    Hosts = ejabberd_options:get_scope(auth_method),
-    get_vh_by_auth_method(AuthMethod, Hosts, []).
-
-get_vh_by_auth_method(Method, [Host|Hosts], Result) ->
-    Methods = get_option({auth_method, Host}, []),
-    case lists:member(Method, Methods) of
-	true when Host == global ->
-	    get_myhosts();
-	true ->
-	    get_vh_by_auth_method(Method, Hosts, [Host|Result]);
-	false ->
-	    get_vh_by_auth_method(Method, Hosts, Result)
-    end;
-get_vh_by_auth_method(_, [], Result) ->
-    Result.
 
 %% @spec (Path::string()) -> true | false
 is_file_readable(Path) ->
@@ -1379,7 +1377,6 @@ now_to_seconds({MegaSecs, Secs, _MicroSecs}) ->
 	      (cache_size) -> fun((timeout()) -> timeout());
 	      (cache_missed) -> fun((boolean()) -> boolean());
 	      (cache_life_time) -> fun((timeout()) -> timeout());
-	      (domain_certfile) -> fun((binary()) -> binary());
 	      (shared_key) -> fun((binary()) -> binary());
 	      (node_start) -> fun((non_neg_integer()) -> non_neg_integer());
 	      (atom()) -> [atom()].
@@ -1417,17 +1414,19 @@ opt_type(cache_life_time) ->
        (infinity) -> infinity;
        (unlimited) -> infinity
     end;
-opt_type(domain_certfile) ->
-    fun misc:try_read_file/1;
+opt_type(negotiation_timeout) ->
+    fun(T) when T > 0 -> T end;
 opt_type(shared_key) ->
     fun iolist_to_binary/1;
 opt_type(node_start) ->
     fun(I) when is_integer(I), I>=0 -> I end;
+opt_type(validate_stream) ->
+    fun(B) when is_boolean(B) -> B end;
 opt_type(_) ->
     [hide_sensitive_log_data, hosts, language, max_fsm_queue,
      default_db, default_ram_db, queue_type, queue_dir, loglevel,
      use_cache, cache_size, cache_missed, cache_life_time,
-     domain_certfile, shared_key, node_start].
+     shared_key, node_start, validate_stream, negotiation_timeout].
 
 -spec may_hide_data(any()) -> any().
 may_hide_data(Data) ->
@@ -1474,3 +1473,14 @@ cache_missed(Host) ->
 %% NOTE: the integer value returned is in *seconds*
 cache_life_time(Host) ->
     get_option({cache_life_time, Host}, 3600).
+
+-spec codec_options(binary() | global) -> [xmpp:decode_option()].
+codec_options(Host) ->
+    case get_option({validate_stream, Host}, false) of
+	true -> [];
+	false -> [ignore_els]
+    end.
+
+-spec negotiation_timeout() -> pos_integer().
+negotiation_timeout() ->
+    timer:seconds(get_option(negotiation_timeout, 30)).

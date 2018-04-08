@@ -5,7 +5,7 @@
 %%% Created : 15 Aug 2014 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2014-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2014-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -20,8 +20,9 @@
 %%% You should have received a copy of the GNU General Public License along
 %%% with this program; if not, write to the Free Software Foundation, Inc.,
 %%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-
+%%%
 %%%-------------------------------------------------------------------
+
 -module(mod_fail2ban).
 
 -behaviour(gen_mod).
@@ -33,15 +34,13 @@
 
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3,
-	 mod_opt_type/1, depends/2]).
+	 mod_opt_type/1, mod_options/1, depends/2]).
 
 -include_lib("stdlib/include/ms_transform.hrl").
 -include("ejabberd.hrl").
 -include("logger.hrl").
 -include("xmpp.hrl").
 
--define(C2S_AUTH_BAN_LIFETIME, 3600). %% 1 hour
--define(C2S_MAX_AUTH_FAILURES, 20).
 -define(CLEAN_INTERVAL, timer:minutes(10)).
 
 -record(state, {host = <<"">> :: binary()}).
@@ -57,11 +56,9 @@ c2s_auth_result(#{ip := {Addr, _}, lserver := LServer} = State, false, _User) ->
 	    State;
 	false ->
 	    BanLifetime = gen_mod:get_module_opt(
-			    LServer, ?MODULE, c2s_auth_ban_lifetime,
-			    ?C2S_AUTH_BAN_LIFETIME),
+			    LServer, ?MODULE, c2s_auth_ban_lifetime),
 	    MaxFailures = gen_mod:get_module_opt(
-			    LServer, ?MODULE, c2s_max_auth_failures,
-			    ?C2S_MAX_AUTH_FAILURES),
+			    LServer, ?MODULE, c2s_max_auth_failures),
 	    UnbanTS = p1_time_compat:system_time(seconds) + BanLifetime,
 	    Attempts = case ets:lookup(failed_auth, Addr) of
 		[{Addr, N, _, _}] ->
@@ -103,7 +100,8 @@ c2s_stream_started(#{ip := {Addr, _}} = State, _) ->
 %% gen_mod callbacks
 %%====================================================================
 start(Host, Opts) ->
-    catch ets:new(failed_auth, [named_table, public]),
+    catch ets:new(failed_auth, [named_table, public,
+				{heir, erlang:group_leader(), none}]),
     gen_mod:start_child(?MODULE, Host, Opts).
 
 stop(Host) ->
@@ -177,7 +175,7 @@ log_and_disconnect(#{ip := {Addr, _}, lang := Lang} = State, Attempts, UnbanTS) 
     {stop, ejabberd_c2s:send(State, Err)}.
 
 is_whitelisted(Host, Addr) ->
-    Access = gen_mod:get_module_opt(Host, ?MODULE, access, none),
+    Access = gen_mod:get_module_opt(Host, ?MODULE, access),
     acl:match_rule(Host, Access, Addr) == allow.
 
 seconds_to_now(Secs) ->
@@ -192,6 +190,9 @@ mod_opt_type(access) ->
 mod_opt_type(c2s_auth_ban_lifetime) ->
     fun (T) when is_integer(T), T > 0 -> T end;
 mod_opt_type(c2s_max_auth_failures) ->
-    fun (I) when is_integer(I), I > 0 -> I end;
-mod_opt_type(_) ->
-    [access, c2s_auth_ban_lifetime, c2s_max_auth_failures].
+    fun (I) when is_integer(I), I > 0 -> I end.
+
+mod_options(_Host) ->
+    [{access, none},
+     {c2s_auth_ban_lifetime, 3600}, %% one hour
+     {c2s_max_auth_failures, 20}].

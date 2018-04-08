@@ -4,7 +4,7 @@
 %%% Created : 14 Apr 2016 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -88,8 +88,9 @@ del_roster(LUser, LServer, LJID) ->
 read_subscription_and_groups(LUser, LServer, LJID) ->
     case ejabberd_riak:get(roster, roster_schema(), {LUser, LServer, LJID}) of
 	{ok, #roster{subscription = Subscription,
+		     ask = Ask,
 		     groups = Groups}} ->
-	    {ok, {Subscription, Groups}};
+	    {ok, {Subscription, Ask, Groups}};
 	_ ->
 	    error
     end.

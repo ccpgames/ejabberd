@@ -5,7 +5,7 @@
 %%% Created : 31 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -30,161 +30,58 @@
 
 -export([start_link/0, init/1]).
 
+-define(SHUTDOWN_TIMEOUT, timer:seconds(30)).
+
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    Hooks =
-	{ejabberd_hooks,
-	 {ejabberd_hooks, start_link, []},
-	 permanent,
-	 brutal_kill,
-	 worker,
-	 [ejabberd_hooks]},
-    Cluster = {ejabberd_cluster,
-	       {ejabberd_cluster, start_link, []},
-	       permanent,
-	       5000,
-	       worker,
-	       [ejabberd_cluster]},
-    SystemMonitor =
-	{ejabberd_system_monitor,
-	 {ejabberd_system_monitor, start_link, []},
-	 permanent,
-	 brutal_kill,
-	 worker,
-	 [ejabberd_system_monitor]},
-    S2S =
-	{ejabberd_s2s,
-	 {ejabberd_s2s, start_link, []},
-	 permanent,
-	 brutal_kill,
-	 worker,
-	 [ejabberd_s2s]},
-    Captcha =
-	{ejabberd_captcha,
-	 {ejabberd_captcha, start_link, []},
-	 permanent,
-	 brutal_kill,
-	 worker,
-	 [ejabberd_captcha]},
-    Listener =
-	{ejabberd_listener,
-	 {ejabberd_listener, start_link, []},
-	 permanent,
-	 infinity,
-	 supervisor,
-	 [ejabberd_listener]},
-    S2SInSupervisor =
-	{ejabberd_s2s_in_sup,
-	 {ejabberd_tmp_sup, start_link,
-	  [ejabberd_s2s_in_sup, ejabberd_s2s_in]},
-	 permanent,
-	 infinity,
-	 supervisor,
-	 [ejabberd_tmp_sup]},
-    S2SOutSupervisor =
-	{ejabberd_s2s_out_sup,
-	 {ejabberd_tmp_sup, start_link,
-	  [ejabberd_s2s_out_sup, ejabberd_s2s_out]},
-	 permanent,
-	 infinity,
-	 supervisor,
-	 [ejabberd_tmp_sup]},
-    ServiceSupervisor =
-	{ejabberd_service_sup,
-	 {ejabberd_tmp_sup, start_link,
-	  [ejabberd_service_sup, ejabberd_service]},
-	 permanent,
-	 infinity,
-	 supervisor,
-	 [ejabberd_tmp_sup]},
-    IQSupervisor =
-	{ejabberd_iq_sup,
-	 {ejabberd_tmp_sup, start_link,
-	  [ejabberd_iq_sup, gen_iq_handler]},
-	 permanent,
-	 infinity,
-	 supervisor,
-	 [ejabberd_tmp_sup]},
-    BackendSupervisor = {ejabberd_backend_sup,
-			 {ejabberd_backend_sup, start_link, []},
-			 permanent, infinity, supervisor,
-			 [ejabberd_backend_sup]},
-    ACL = {acl, {acl, start_link, []},
-	   permanent, 5000, worker, [acl]},
-    Shaper = {shaper, {shaper, start_link, []},
-	   permanent, 5000, worker, [shaper]},
-    SQLSupervisor = {ejabberd_rdbms,
-		     {ejabberd_rdbms, start_link, []},
-		     permanent, infinity, supervisor, [ejabberd_rdbms]},
-    RiakSupervisor = {ejabberd_riak_sup,
-		     {ejabberd_riak_sup, start_link, []},
-		      permanent, infinity, supervisor, [ejabberd_riak_sup]},
-    RedisSupervisor = {ejabberd_redis_sup,
-		       {ejabberd_redis_sup, start_link, []},
-		       permanent, infinity, supervisor, [ejabberd_redis_sup]},
-    Router = {ejabberd_router, {ejabberd_router, start_link, []},
-	      permanent, 5000, worker, [ejabberd_router]},
-    RouterMulticast = {ejabberd_router_multicast,
-		       {ejabberd_router_multicast, start_link, []},
-		       permanent, 5000, worker, [ejabberd_router_multicast]},
-    Local = {ejabberd_local, {ejabberd_local, start_link, []},
-	     permanent, 5000, worker, [ejabberd_local]},
-    SM = {ejabberd_sm, {ejabberd_sm, start_link, []},
-	  permanent, 5000, worker, [ejabberd_sm]},
-    GenModSupervisor = {ejabberd_gen_mod_sup, {gen_mod, start_link, []},
-			permanent, infinity, supervisor, [gen_mod]},
-    ExtMod = {ext_mod, {ext_mod, start_link, []},
-	      permanent, 5000, worker, [ext_mod]},
-    Auth = {ejabberd_auth, {ejabberd_auth, start_link, []},
-	    permanent, 5000, worker, [ejabberd_auth]},
-    OAuth = {ejabberd_oauth, {ejabberd_oauth, start_link, []},
-	     permanent, 5000, worker, [ejabberd_oauth]},
-    Translation = {translate, {translate, start_link, []},
-		   permanent, 5000, worker, [translate]},
-    AccessPerms = {ejabberd_access_permissions,
-		   {ejabberd_access_permissions, start_link, []},
-		   permanent, 5000, worker, [ejabberd_access_permissions]},
-    Ctl = {ejabberd_ctl, {ejabberd_ctl, start_link, []},
-	   permanent, 5000, worker, [ejabberd_ctl]},
-    Commands = {ejabberd_commands, {ejabberd_commands, start_link, []},
-		permanent, 5000, worker, [ejabberd_commands]},
-    Admin = {ejabberd_admin, {ejabberd_admin, start_link, []},
-	     permanent, 5000, worker, [ejabberd_admin]},
-    CyrSASL = {cyrsasl, {cyrsasl, start_link, []},
-	       permanent, 5000, worker, [cyrsasl]},
-    PKIX = {ejabberd_pkix, {ejabberd_pkix, start_link, []},
-	    permanent, 5000, worker, [ejabberd_pkix]},
     {ok, {{one_for_one, 10, 1},
-	  [Hooks,
-	   Cluster,
-	   CyrSASL,
-	   Translation,
-	   AccessPerms,
-	   Ctl,
-	   Commands,
-	   Admin,
-	   PKIX,
-	   Listener,
-	   SystemMonitor,
-	   S2S,
-	   Captcha,
-	   S2SInSupervisor,
-	   S2SOutSupervisor,
-	   ServiceSupervisor,
-	   IQSupervisor,
-	   ACL,
-	   Shaper,
-	   BackendSupervisor,
-	   SQLSupervisor,
-	   RiakSupervisor,
-	   RedisSupervisor,
-	   Router,
-	   RouterMulticast,
-	   Local,
-	   SM,
-	   ExtMod,
-	   GenModSupervisor,
-	   Auth,
-	   OAuth]}}.
+	  [worker(ejabberd_hooks),
+	   worker(ejabberd_cluster),
+	   worker(cyrsasl),
+	   worker(translate),
+	   worker(ejabberd_access_permissions),
+	   worker(ejabberd_ctl),
+	   worker(ejabberd_commands),
+	   worker(ejabberd_admin),
+	   worker(ejabberd_pkix),
+	   worker(ejabberd_acme),
+	   supervisor(ejabberd_listener),
+	   worker(ejabberd_s2s),
+	   simple_supervisor(ejabberd_s2s_in),
+	   simple_supervisor(ejabberd_s2s_out),
+	   simple_supervisor(ejabberd_service),
+	   worker(acl),
+	   worker(shaper),
+	   supervisor(ejabberd_backend_sup),
+	   supervisor(ejabberd_rdbms),
+	   supervisor(ejabberd_riak_sup),
+	   supervisor(ejabberd_redis_sup),
+	   worker(ejabberd_iq),
+	   worker(ejabberd_router),
+	   worker(ejabberd_router_multicast),
+	   worker(ejabberd_local),
+	   worker(ejabberd_sm),
+	   worker(ejabberd_captcha),
+	   worker(ext_mod),
+	   supervisor(ejabberd_gen_mod_sup, gen_mod),
+	   worker(ejabberd_auth),
+	   worker(ejabberd_oauth)]}}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+worker(Mod) ->
+    {Mod, {Mod, start_link, []}, permanent, ?SHUTDOWN_TIMEOUT, worker, [Mod]}.
+
+supervisor(Mod) ->
+    supervisor(Mod, Mod).
+
+supervisor(Name, Mod) ->
+    {Name, {Mod, start_link, []}, permanent, infinity, supervisor, [Mod]}.
+
+simple_supervisor(Mod) ->
+    Name = list_to_atom(atom_to_list(Mod) ++ "_sup"),
+    {Name, {ejabberd_tmp_sup, start_link, [Name, Mod]},
+     permanent, infinity, supervisor, [ejabberd_tmp_sup]}.

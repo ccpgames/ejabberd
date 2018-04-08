@@ -3,7 +3,7 @@
 %%% Created :  5 Jul 2017 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -113,21 +113,28 @@ get_node_by_id(ID) ->
     Mod = get_mod(),
     Mod:get_node_by_id(ID).
 
+%% Note that false positive returns are possible, while false negatives are not.
+%% In other words: positive return value (i.e. 'true') doesn't guarantee
+%% successful delivery, while negative return value ('false') means
+%% the delivery has definitely failed.
 -spec send(dst(), term()) -> boolean().
-send(Dst, Msg) ->
-    IsLocal = case Dst of
-		  {_, Node} -> Node == node();
-		  Pid when is_pid(Pid) -> node(Pid) == node();
-		  Name when is_atom(Name) -> true;
-		  _ -> false
-	      end,
-    if IsLocal ->
-	    erlang:send(Dst, Msg),
+send({Name, Node}, Msg) when Node == node() ->
+    send(Name, Msg);
+send(undefined, _Msg) ->
+    false;
+send(Name, Msg) when is_atom(Name) ->
+    send(whereis(Name), Msg);
+send(Pid, Msg) when is_pid(Pid) andalso node(Pid) == node() ->
+    case erlang:is_process_alive(Pid) of
+	true ->
+	    erlang:send(Pid, Msg),
 	    true;
-       true ->
-	    Mod = get_mod(),
-	    Mod:send(Dst, Msg)
-    end.
+	false ->
+	    false
+    end;
+send(Dst, Msg) ->
+    Mod = get_mod(),
+    Mod:send(Dst, Msg).
 
 -spec wait_for_sync(timeout()) -> ok | {error, any()}.
 wait_for_sync(Timeout) ->

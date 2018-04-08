@@ -3,7 +3,7 @@
 %%% Created : 13 Sep 2017 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -23,10 +23,13 @@
 -module(mod_avatar).
 -behaviour(gen_mod).
 
+-protocol({xep, 398, '0.2.0'}).
+
 %% gen_mod API
--export([start/2, stop/1, reload/3, depends/2, mod_opt_type/1]).
+-export([start/2, stop/1, reload/3, depends/2, mod_opt_type/1, mod_options/1]).
 %% Hooks
--export([pubsub_publish_item/6, vcard_iq_convert/1, vcard_iq_publish/1]).
+-export([pubsub_publish_item/6, vcard_iq_convert/1, vcard_iq_publish/1,
+	 get_sm_features/5]).
 
 -include("xmpp.hrl").
 -include("logger.hrl").
@@ -38,27 +41,22 @@
 %%% API
 %%%===================================================================
 start(Host, _Opts) ->
-    case misc:have_eimp() of
-	true ->
-	    ejabberd_hooks:add(pubsub_publish_item, Host, ?MODULE,
-			       pubsub_publish_item, 50),
-	    ejabberd_hooks:add(vcard_iq_set, Host, ?MODULE,
-			       vcard_iq_convert, 30),
-	    ejabberd_hooks:add(vcard_iq_set, Host, ?MODULE,
-			       vcard_iq_publish, 100);
-	false ->
-	    ?CRITICAL_MSG("ejabberd is built without "
-			  "graphics support: reconfigure it with "
-			  "--enable-graphics or disable '~s'",
-			  [?MODULE]),
-	    {error, graphics_not_compiled}
-    end.
+    ejabberd_hooks:add(pubsub_publish_item, Host, ?MODULE,
+		       pubsub_publish_item, 50),
+    ejabberd_hooks:add(vcard_iq_set, Host, ?MODULE,
+		       vcard_iq_convert, 30),
+    ejabberd_hooks:add(vcard_iq_set, Host, ?MODULE,
+		       vcard_iq_publish, 100),
+    ejabberd_hooks:add(disco_sm_features, Host, ?MODULE,
+		       get_sm_features, 50).
 
 stop(Host) ->
     ejabberd_hooks:delete(pubsub_publish_item, Host, ?MODULE,
 			  pubsub_publish_item, 50),
     ejabberd_hooks:delete(vcard_iq_set, Host, ?MODULE, vcard_iq_convert, 30),
-    ejabberd_hooks:delete(vcard_iq_set, Host, ?MODULE, vcard_iq_publish, 100).
+    ejabberd_hooks:delete(vcard_iq_set, Host, ?MODULE, vcard_iq_publish, 100),
+    ejabberd_hooks:delete(disco_sm_features, Host, ?MODULE,
+			  get_sm_features, 50).
 
 reload(_Host, _NewOpts, _OldOpts) ->
     ok.
@@ -151,6 +149,20 @@ vcard_iq_publish(#iq{sub_els = [#vcard_temp{
 	    publish_avatar(IQ, #avatar_meta{}, MimeType, Data, SHA1)
     end;
 vcard_iq_publish(Acc) ->
+    Acc.
+
+-spec get_sm_features({error, stanza_error()} | empty | {result, [binary()]},
+		      jid(), jid(), binary(), binary()) ->
+			     {error, stanza_error()} | empty | {result, [binary()]}.
+get_sm_features({error, _Error} = Acc, _From, _To, _Node, _Lang) ->
+    Acc;
+get_sm_features(Acc, _From, _To, <<"">>, _Lang) ->
+    {result, [?NS_DISCO_INFO, ?NS_PEP_VCARD_CONVERSION_0 |
+	      case Acc of
+		  {result, Features} -> Features;
+		  empty -> []
+	      end]};
+get_sm_features(Acc, _From, _To, _Node, _Lang) ->
     Acc.
 
 %%%===================================================================
@@ -325,7 +337,10 @@ convert_avatar(LUser, LServer, Data, Rules) ->
        true ->
 	    ?DEBUG("Converting avatar of ~s@~s: ~s -> ~s",
 		   [LUser, LServer, Type, NewType]),
-	    case eimp:convert(Data, NewType) of
+	    RateLimit = gen_mod:get_module_opt(LServer, ?MODULE, rate_limit),
+	    Opts = [{limit_by, {LUser, LServer}},
+		    {rate_limit, RateLimit}],
+	    case eimp:convert(Data, NewType, Opts) of
 		{ok, NewData} ->
 		    {ok, encode_mime_type(NewType), NewData};
 		{error, Reason} = Err ->
@@ -384,7 +399,7 @@ stop_with_error(Lang, Reason) ->
 
 -spec get_converting_rules(binary()) -> convert_rules().
 get_converting_rules(LServer) ->
-    gen_mod:get_module_opt(LServer, ?MODULE, convert, []).
+    gen_mod:get_module_opt(LServer, ?MODULE, convert).
 
 -spec get_type(binary()) -> eimp:img_type() | unknown.
 get_type(Data) ->
@@ -416,35 +431,38 @@ decode_mime_type(MimeType) ->
 encode_mime_type(Type) ->
     <<"image/", (atom_to_binary(Type, latin1))/binary>>.
 
-mod_opt_type({convert, png}) ->
-    fun(jpeg) -> jpeg;
-       (webp) -> webp;
-       (gif) -> gif
+-spec fail(atom()) -> no_return().
+fail(Format) ->
+    FormatS = case Format of
+		  webp -> "WebP";
+		  png -> "PNG";
+		  jpeg -> "JPEG";
+		  gif -> "GIF";
+		  _ -> ""
+	      end,
+    if FormatS /= "" ->
+	    ?WARNING_MSG("ejabberd is not compiled with ~s support", [FormatS]);
+       true ->
+	    ok
+    end,
+    erlang:error(badarg).
+
+mod_opt_type({convert, From}) ->
+    fun(To) when is_atom(To), To /= From ->
+	    case eimp:is_supported(From) orelse From == default of
+		false ->
+		    fail(From);
+		true ->
+		    case eimp:is_supported(To) orelse To == undefined of
+			false -> fail(To);
+			true -> To
+		    end
+	    end
     end;
-mod_opt_type({convert, webp}) ->
-    fun(jpeg) -> jpeg;
-       (png) -> png;
-       (gif) -> gif
-    end;
-mod_opt_type({convert, jpeg}) ->
-    fun(png) -> png;
-       (webp) -> webp;
-       (gif) -> gif
-    end;
-mod_opt_type({convert, gif}) ->
-    fun(png) -> png;
-       (jpeg) -> jpeg;
-       (webp) -> webp
-    end;
-mod_opt_type({convert, default}) ->
-    fun(png) -> png;
-       (webp) -> webp;
-       (jpeg) -> jpeg;
-       (gif) -> gif
-    end;
-mod_opt_type(_) ->
-    [{convert, default},
-     {convert, webp},
-     {convert, png},
-     {convert, gif},
-     {convert, jpeg}].
+mod_opt_type(rate_limit) ->
+    fun(I) when is_integer(I), I > 0 -> I end.
+
+mod_options(_) ->
+    [{rate_limit, 10},
+     {convert,
+      [{T, undefined} || T <- [default|eimp:supported_formats()]]}].

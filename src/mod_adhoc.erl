@@ -5,7 +5,7 @@
 %%% Created : 15 Nov 2005 by Magnus Henoch <henoch@dtek.chalmers.se>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,19 +35,18 @@
 	 process_sm_iq/1, get_local_commands/5,
 	 get_local_identity/5, get_local_features/5,
 	 get_sm_commands/5, get_sm_identity/5, get_sm_features/5,
-	 ping_item/4, ping_command/4, mod_opt_type/1, depends/2]).
+	 ping_item/4, ping_command/4, mod_opt_type/1, depends/2,
+	 mod_options/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
 -include("xmpp.hrl").
 
-start(Host, Opts) ->
-    IQDisc = gen_mod:get_opt(iqdisc, Opts, gen_iq_handler:iqdisc(Host)),
+start(Host, _Opts) ->
     gen_iq_handler:add_iq_handler(ejabberd_local, Host,
-				  ?NS_COMMANDS, ?MODULE, process_local_iq,
-				  IQDisc),
+				  ?NS_COMMANDS, ?MODULE, process_local_iq),
     gen_iq_handler:add_iq_handler(ejabberd_sm, Host,
-				  ?NS_COMMANDS, ?MODULE, process_sm_iq, IQDisc),
+				  ?NS_COMMANDS, ?MODULE, process_sm_iq),
     ejabberd_hooks:add(disco_local_identity, Host, ?MODULE,
 		       get_local_identity, 99),
     ejabberd_hooks:add(disco_local_features, Host, ?MODULE,
@@ -87,16 +86,8 @@ stop(Host) ->
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host,
 				     ?NS_COMMANDS).
 
-reload(Host, NewOpts, OldOpts) ->
-    case gen_mod:is_equal_opt(iqdisc, NewOpts, OldOpts, gen_iq_handler:iqdisc(Host)) of
-	{false, IQDisc, _} ->
-	    gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_COMMANDS,
-					  ?MODULE, process_local_iq, IQDisc),
-	    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_COMMANDS,
-					  ?MODULE, process_sm_iq, IQDisc);
-	true ->
-	    ok
-    end.
+reload(_Host, _NewOpts, _OldOpts) ->
+    ok.
 
 %-------------------------------------------------------------------------
 
@@ -104,8 +95,7 @@ get_local_commands(Acc, _From,
 		   #jid{server = Server, lserver = LServer} = _To, <<"">>,
 		   Lang) ->
     Display = gen_mod:get_module_opt(LServer, ?MODULE,
-				     report_commands_node,
-                                     false),
+				     report_commands_node),
     case Display of
       false -> Acc;
       _ ->
@@ -133,8 +123,7 @@ get_local_commands(Acc, _From, _To, _Node, _Lang) ->
 get_sm_commands(Acc, _From,
 		#jid{lserver = LServer} = To, <<"">>, Lang) ->
     Display = gen_mod:get_module_opt(LServer, ?MODULE,
-				     report_commands_node,
-                                     false),
+				     report_commands_node),
     case Display of
       false -> Acc;
       _ ->
@@ -281,7 +270,8 @@ ping_command(Acc, _From, _To, _Request) -> Acc.
 depends(_Host, _Opts) ->
     [].
 
-mod_opt_type(iqdisc) -> fun gen_iq_handler:check_type/1;
 mod_opt_type(report_commands_node) ->
-    fun (B) when is_boolean(B) -> B end;
-mod_opt_type(_) -> [iqdisc, report_commands_node].
+    fun (B) when is_boolean(B) -> B end.
+
+mod_options(_Host) ->
+    [{report_commands_node, false}].

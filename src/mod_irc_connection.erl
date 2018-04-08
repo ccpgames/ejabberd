@@ -5,7 +5,7 @@
 %%% Created : 15 Feb 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -418,7 +418,7 @@ handle_info({route_chan, Channel, Resource,
 	    end
     catch _:{xmpp_codec, Why} ->
 	    Err = xmpp:err_bad_request(
-		    xmpp:format_error(Why), xmpp:get_lang(Packet)),
+		    xmpp:io_format_error(Why), xmpp:get_lang(Packet)),
 	    ejabberd_router:route_error(Packet, Err)
     end,
     {next_state, StateName, StateData};

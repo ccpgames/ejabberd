@@ -84,6 +84,14 @@ AC_ARG_ENABLE(roster_gateway_workaround,
   *) AC_MSG_ERROR(bad value ${enableval} for --enable-roster-gateway-workaround) ;;
 esac],[roster_gateway_workaround=false])
 
+AC_ARG_ENABLE(new_sql_schema,
+[AC_HELP_STRING([--enable-new-sql-schema], [use new SQL schema (default: no)])],
+[case "${enableval}" in
+  yes) new_sql_schema=true ;;
+  no)  new_sql_schema=false ;;
+  *) AC_MSG_ERROR(bad value ${enableval} for --enable-new-sql-schema) ;;
+esac],[new_sql_schema=false])
+
 AC_ARG_ENABLE(full_xml,
 [AC_HELP_STRING([--enable-full-xml], [use XML features in XMPP stream (ex: CDATA) (default: no, requires XML compliant clients)])],
 [case "${enableval}" in
@@ -236,14 +244,6 @@ AC_ARG_ENABLE(sip,
   *) AC_MSG_ERROR(bad value ${enableval} for --enable-sip) ;;
 esac],[if test "x$sip" = "x"; then sip=false; fi])
 
-AC_ARG_ENABLE(graphics,
-[AC_HELP_STRING([--enable-graphics], [enable support for graphic images manipulation (default: yes)])],
-[case "${enableval}" in
-  yes) graphics=true ;;
-  no)  graphics=false ;;
-  *) AC_MSG_ERROR(bad value ${enableval} for --enable-graphics) ;;
-esac],[if test "x$graphics" = "x"; then graphics=true; fi])
-
 AC_CONFIG_FILES([Makefile
 		 vars.config
 		 src/ejabberd.app.src])
@@ -261,6 +261,19 @@ if test "$ENABLEUSER" != ""; then
   echo "allow this system user to start ejabberd: $ENABLEUSER"
   AC_SUBST([INSTALLUSER], [$ENABLEUSER])
 fi
+ENABLEGROUP=""
+AC_ARG_ENABLE(group,
+  [AS_HELP_STRING([--enable-group[[[[=GROUP]]]]], [allow this system group to start ejabberd (default: no)])],
+  [case "${enableval}" in
+     yes) ENABLEGROUP=`groups |head -n 1` ;;
+     no) ENABLEGROUP="" ;;
+     *) ENABLEGROUP=$enableval
+   esac],
+  [])
+if test "$ENABLEGROUP" != ""; then
+  echo "allow this system group to start ejabberd: $ENABLEGROUP"
+  AC_SUBST([INSTALLGROUP], [$ENABLEGROUP])
+fi
 
 ERLANG_DEPRECATED_TYPES_CHECK
 
@@ -271,8 +284,20 @@ if test "$sqlite" = "true"; then
    fi
 fi
 
+enabled_backends=""
+for backend in odbc mysql pgsql sqlite riak redis; do
+    if eval test x\${$backend} = xtrue; then
+       if test "x$enabled_backends" = "x"; then
+          enabled_backends=$backend
+       else
+          enabled_backends="$enabled_backends, $backend"
+       fi
+    fi
+done
+
 AC_SUBST(hipe)
 AC_SUBST(roster_gateway_workaround)
+AC_SUBST(new_sql_schema)
 AC_SUBST(full_xml)
 AC_SUBST(db_type)
 AC_SUBST(odbc)
@@ -288,12 +313,12 @@ AC_SUBST(iconv)
 AC_SUBST(stun)
 AC_SUBST(sip)
 AC_SUBST(debug)
-AC_SUBST(graphics)
 AC_SUBST(tools)
 AC_SUBST(latest_deps)
 AC_SUBST(system_deps)
 AC_SUBST(CFLAGS)
 AC_SUBST(CPPFLAGS)
 AC_SUBST(LDFLAGS)
+AC_SUBST(enabled_backends)
 
 AC_OUTPUT

@@ -5,7 +5,7 @@
 %%% Created : 16 Oct 2014 by Christophe Romain <christophe.romain@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -172,7 +172,7 @@ url(Server, Path, Params) ->
     Base = base_url(Server, Path),
     [<<$&, ParHead/binary>> | ParTail] =
         [<<"&", (iolist_to_binary(Key))/binary, "=",
-	  (ejabberd_http:url_encode(Value))/binary>>
+	  (misc:url_encode(Value))/binary>>
             || {Key, Value} <- Params],
     Tail = iolist_to_binary([ParHead | ParTail]),
     binary_to_list(<<Base/binary, $?, Tail/binary>>).

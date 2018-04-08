@@ -3,7 +3,7 @@
 %%% Created : 29 Mar 2017 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -42,13 +42,13 @@ enable(LUser, LServer, LResource, NS) ->
     NodeS = erlang:atom_to_binary(node(), latin1),
     case ?SQL_UPSERT(LServer, "carboncopy",
 		     ["!username=%(LUser)s",
+                      "!server_host=%(LServer)s",
 		      "!resource=%(LResource)s",
 		      "namespace=%(NS)s",
 		      "node=%(NodeS)s"]) of
 	ok ->
 	    ok;
-	Err ->
-	    ?ERROR_MSG("failed to update 'carboncopy' table: ~p", [Err]),
+	_Err ->
 	    {error, db_failure}
     end.
 
@@ -56,11 +56,10 @@ disable(LUser, LServer, LResource) ->
     case ejabberd_sql:sql_query(
 	   LServer,
 	   ?SQL("delete from carboncopy where username=%(LUser)s "
-		"and resource=%(LResource)s")) of
+		"and %(LServer)H and resource=%(LResource)s")) of
 	{updated, _} ->
 	    ok;
-	Err ->
-	    ?ERROR_MSG("failed to delete from 'carboncopy' table: ~p", [Err]),
+	_Err ->
 	    {error, db_failure}
     end.
 
@@ -68,12 +67,11 @@ list(LUser, LServer) ->
     case ejabberd_sql:sql_query(
 	   LServer,
 	   ?SQL("select @(resource)s, @(namespace)s, @(node)s from carboncopy "
-		"where username=%(LUser)s")) of
+		"where username=%(LUser)s and %(LServer)H")) of
 	{selected, Rows} ->
 	    {ok, [{Resource, NS, binary_to_atom(Node, latin1)}
 		  || {Resource, NS, Node} <- Rows]};
-	Err ->
-	    ?ERROR_MSG("failed to select from 'carboncopy' table: ~p", [Err]),
+	_Err ->
 	    {error, db_failure}
     end.
 

@@ -5,7 +5,7 @@
 %%% Created : 27 Feb 2004 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -31,7 +31,7 @@
 
 %% External exports
 -export([start/2, start_link/2, become_controller/1,
-	 socket_type/0, receive_headers/1, url_encode/1,
+	 socket_type/0, receive_headers/1,
          transform_listen_option/2, listen_opt_type/1]).
 
 -export([init/2, opt_type/1]).
@@ -97,8 +97,7 @@ start_link(SockData, Opts) ->
 
 init({SockMod, Socket}, Opts) ->
     TLSEnabled = proplists:get_bool(tls, Opts),
-    TLSOpts1 = lists:filter(fun ({certfile, _}) -> true;
-				({ciphers, _}) -> true;
+    TLSOpts1 = lists:filter(fun ({ciphers, _}) -> true;
 				({dhfile, _}) -> true;
 				({protocol_options, _}) -> true;
 				(_) -> false
@@ -108,7 +107,11 @@ init({SockMod, Socket}, Opts) ->
                    false -> [compression_none | TLSOpts1];
                    true -> TLSOpts1
                end,
-    TLSOpts = [verify_none | TLSOpts2],
+    TLSOpts3 = case get_certfile(Opts) of
+		   undefined -> TLSOpts2;
+		   CertFile -> [{certfile, CertFile}|TLSOpts2]
+	       end,
+    TLSOpts = [verify_none | TLSOpts3],
     {SockMod1, Socket1} = if TLSEnabled ->
 				 inet:setopts(Socket, [{recbuf, 8192}]),
 				 {ok, TLSSocket} = fast_tls:tcp_to_tls(Socket,
@@ -146,7 +149,6 @@ init({SockMod, Socket}, Opts) ->
 
     CustomHeaders = proplists:get_value(custom_headers, Opts, []),
 
-    ?INFO_MSG("started: ~p", [{SockMod1, Socket1}]),
     State = #state{sockmod = SockMod1,
                    socket = Socket1,
                    default_host = DefaultHost,
@@ -266,10 +268,11 @@ process_header(State, Data) ->
 			  add_header(Name, Value, State)};
       {ok, http_eoh}
 	  when State#state.request_host == undefined ->
-	  ?WARNING_MSG("An HTTP request without 'Host' HTTP "
-		       "header was received.",
-		       []),
-	  throw(http_request_no_host_header);
+	    ?DEBUG("An HTTP request without 'Host' HTTP "
+		   "header was received.", []),
+	    {State1, Out} = process_request(State),
+	    send_text(State1, Out),
+	    process_header(State, {ok, {http_error, <<>>}});
       {ok, http_eoh} ->
 	  ?DEBUG("(~w) http query: ~w ~p~n",
 		 [State#state.socket, State#state.request_method,
@@ -418,6 +421,10 @@ extract_path_query(#state{request_method = Method,
 extract_path_query(State) ->
     {State, false}.
 
+process_request(#state{request_host = undefined,
+		       custom_headers = CustomHeaders} = State) ->
+    {State, make_text_output(State, 400, CustomHeaders,
+			     <<"Missing Host header">>)};
 process_request(#state{request_method = Method,
 		       request_auth = Auth,
 		       request_lang = Lang,
@@ -460,7 +467,9 @@ process_request(#state{request_method = Method,
 			       opts = Options,
                                headers = RequestHeaders,
                                ip = IP},
-	    Res = case process(RequestHandlers, Request, Socket, SockMod, Trail) of
+	    RequestHandlers1 = ejabberd_hooks:run_fold(
+				http_request_handlers, RequestHandlers, [Host, Request]),
+	    Res = case process(RequestHandlers1, Request, Socket, SockMod, Trail) of
 		      El when is_record(El, xmlel) ->
 			  make_xhtml_output(State, 200, CustomHeaders, El);
 		      {Status, Headers, El}
@@ -642,7 +651,7 @@ parse_lang(Langs) ->
     end.
 
 % Code below is taken (with some modifications) from the yaws webserver, which
-% is distributed under the folowing license:
+% is distributed under the following license:
 %
 % This software (the yaws webserver) is free software.
 % Parts of this software is Copyright (c) Claes Wikstrom <klacke@hyber.org>
@@ -670,7 +679,7 @@ url_decode_q_split(<<>>, Ack) ->
 path_decode(Path) -> path_decode(Path, <<>>).
 
 path_decode(<<$%, Hi, Lo, Tail/binary>>, Acc) ->
-    Hex = hex_to_integer([Hi, Lo]),
+    Hex = list_to_integer([Hi, Lo], 16),
     if Hex == 0 -> exit(badurl);
        true -> ok
     end,
@@ -706,22 +715,6 @@ expand_custom_headers(Headers) ->
     lists:map(fun({K, V}) ->
 		      {K, misc:expand_keyword(<<"@VERSION@">>, V, ?VERSION)}
 	      end, Headers).
-
-%% hex_to_integer
-
-hex_to_integer(Hex) ->
-    case catch list_to_integer(Hex, 16) of
-      {'EXIT', _} -> old_hex_to_integer(Hex);
-      X -> X
-    end.
-
-old_hex_to_integer(Hex) ->
-    DEHEX = fun (H) when H >= $a, H =< $f -> H - $a + 10;
-		(H) when H >= $A, H =< $F -> H - $A + 10;
-		(H) when H >= $0, H =< $9 -> H - $0
-	    end,
-    lists:foldl(fun (E, Acc) -> Acc * 16 + DEHEX(E) end, 0,
-		Hex).
 
 code_to_phrase(100) -> <<"Continue">>;
 code_to_phrase(101) -> <<"Switching Protocols ">>;
@@ -793,7 +786,7 @@ parse_urlencoded(S) ->
 
 parse_urlencoded(<<$%, Hi, Lo, Tail/binary>>, Last, Cur,
 		 State) ->
-    Hex = hex_to_integer([Hi, Lo]),
+    Hex = list_to_integer([Hi, Lo], 16),
     parse_urlencoded(Tail, Last, <<Cur/binary, Hex>>, State);
 parse_urlencoded(<<$&, Tail/binary>>, _Last, Cur, key) ->
     [{Cur, <<"">>} | parse_urlencoded(Tail,
@@ -812,41 +805,6 @@ parse_urlencoded(<<H, Tail/binary>>, Last, Cur, State) ->
 parse_urlencoded(<<>>, Last, Cur, _State) ->
     [{Last, Cur}];
 parse_urlencoded(undefined, _, _, _) -> [].
-
-
-url_encode(A) ->
-    url_encode(A, <<>>).
-
-url_encode(<<H:8, T/binary>>, Acc) when
-      (H >= $a andalso H =< $z) orelse
-      (H >= $A andalso H =< $Z) orelse
-      (H >= $0 andalso H =< $9) orelse
-      H == $_ orelse
-      H == $. orelse
-      H == $- orelse
-      H == $/ orelse
-      H == $: ->
-    url_encode(T, <<Acc/binary, H>>);
-url_encode(<<H:8, T/binary>>, Acc) ->
-    case integer_to_hex(H) of
-        [X, Y] -> url_encode(T, <<Acc/binary, $%, X, Y>>);
-        [X] -> url_encode(T, <<Acc/binary, $%, $0, X>>)
-    end;
-url_encode(<<>>, Acc) ->
-    Acc.
-
-
-integer_to_hex(I) ->
-    case catch erlang:integer_to_list(I, 16) of
-      {'EXIT', _} -> old_integer_to_hex(I);
-      Int -> Int
-    end.
-
-old_integer_to_hex(I) when I < 10 -> integer_to_list(I);
-old_integer_to_hex(I) when I < 16 -> [I - 10 + $A];
-old_integer_to_hex(I) when I >= 16 ->
-    N = trunc(I / 16),
-    old_integer_to_hex(N) ++ old_integer_to_hex(I rem 16).
 
 % The following code is mostly taken from yaws_ssl.erl
 
@@ -878,6 +836,20 @@ normalize_path([_Parent, <<"..">>|Path], Norm) ->
     normalize_path(Path, Norm);
 normalize_path([Part | Path], Norm) ->
     normalize_path(Path, [Part|Norm]).
+
+-spec get_certfile([proplists:property()]) -> binary() | undefined.
+get_certfile(Opts) ->
+    case lists:keyfind(certfile, 1, Opts) of
+	{_, CertFile} ->
+	    CertFile;
+	false ->
+	    case ejabberd_pkix:get_certfile(?MYNAME) of
+		{ok, CertFile} ->
+		    CertFile;
+		error ->
+		    ejabberd_config:get_option({domain_certfile, ?MYNAME})
+	    end
+    end.
 
 transform_listen_option(captcha, Opts) ->
     [{captcha, true}|Opts];
@@ -927,8 +899,10 @@ opt_type(_) -> [trusted_proxies].
 		     (atom()) -> [atom()].
 listen_opt_type(tls) ->
     fun(B) when is_boolean(B) -> B end;
-listen_opt_type(certfile) ->
+listen_opt_type(certfile = Opt) ->
     fun(S) ->
+	    ?WARNING_MSG("Listening option '~s' for ~s is deprecated, use "
+			 "'certfiles' global option instead", [Opt, ?MODULE]),
 	    ejabberd_pkix:add_certfile(S),
 	    iolist_to_binary(S)
     end;
@@ -969,6 +943,10 @@ listen_opt_type(default_host) ->
     fun(A) -> A end;
 listen_opt_type(custom_headers) ->
     fun expand_custom_headers/1;
+listen_opt_type(inet) -> fun(B) when is_boolean(B) -> B end;
+listen_opt_type(inet6) -> fun(B) when is_boolean(B) -> B end;
+listen_opt_type(backlog) ->
+    fun(I) when is_integer(I), I>0 -> I end;
 listen_opt_type(_) ->
     %% TODO
     fun(A) -> A end.

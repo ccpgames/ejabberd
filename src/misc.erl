@@ -8,7 +8,7 @@
 %%% Created : 30 Mar 2017 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -29,11 +29,12 @@
 
 %% API
 -export([tolower/1, term_to_base64/1, base64_to_term/1, ip_to_list/1,
-	 hex_to_bin/1, hex_to_base64/1, expand_keyword/3,
+	 hex_to_bin/1, hex_to_base64/1, url_encode/1, expand_keyword/3,
 	 atom_to_binary/1, binary_to_atom/1, tuple_to_binary/1,
 	 l2i/1, i2l/1, i2l/2, expr_to_term/1, term_to_expr/1,
 	 now_to_usec/1, usec_to_now/1, encode_pid/1, decode_pid/2,
-	 compile_exprs/2, join_atoms/2, try_read_file/1, have_eimp/0]).
+	 compile_exprs/2, join_atoms/2, try_read_file/1,
+	 css_dir/0, img_dir/0, js_dir/0, read_css/1, read_img/1, read_js/1]).
 
 %% Deprecated functions
 -export([decode_base64/1, encode_base64/1]).
@@ -103,6 +104,10 @@ hex_to_bin([H1, H2 | T], Acc) ->
 -spec hex_to_base64(binary()) -> binary().
 hex_to_base64(Hex) ->
     base64:encode(hex_to_bin(Hex)).
+
+-spec url_encode(binary()) -> binary().
+url_encode(A) ->
+    url_encode(A, <<>>).
 
 -spec expand_keyword(binary(), binary(), binary()) -> binary().
 expand_keyword(Keyword, Input, Replacement) ->
@@ -213,15 +218,73 @@ try_read_file(Path) ->
 	    erlang:error(badarg)
     end.
 
--ifdef(GRAPHICS).
-have_eimp() -> true.
--else.
-have_eimp() -> false.
--endif.
+-spec css_dir() -> file:filename().
+css_dir() ->
+    case os:getenv("EJABBERD_CSS_PATH") of
+	false ->
+	    case code:priv_dir(ejabberd) of
+		{error, _} -> filename:join(["priv", "css"]);
+		Path -> filename:join([Path, "css"])
+	    end;
+	Path -> Path
+    end.
+
+-spec img_dir() -> file:filename().
+img_dir() ->
+    case os:getenv("EJABBERD_IMG_PATH") of
+	false ->
+	    case code:priv_dir(ejabberd) of
+		{error, _} -> filename:join(["priv", "img"]);
+		Path -> filename:join([Path, "img"])
+	    end;
+	Path -> Path
+    end.
+
+-spec js_dir() -> file:filename().
+js_dir() ->
+    case os:getenv("EJABBERD_JS_PATH") of
+	false ->
+	    case code:priv_dir(ejabberd) of
+		{error, _} -> filename:join(["priv", "js"]);
+		Path -> filename:join([Path, "js"])
+	    end;
+	Path -> Path
+    end.
+
+-spec read_css(file:filename()) -> {ok, binary()} | {error, file:posix()}.
+read_css(File) ->
+    read_file(filename:join(css_dir(), File)).
+
+-spec read_img(file:filename()) -> {ok, binary()} | {error, file:posix()}.
+read_img(File) ->
+    read_file(filename:join(img_dir(), File)).
+
+-spec read_js(file:filename()) -> {ok, binary()} | {error, file:posix()}.
+read_js(File) ->
+    read_file(filename:join(js_dir(), File)).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+-spec url_encode(binary(), binary()) -> binary().
+url_encode(<<H:8, T/binary>>, Acc) when
+  (H >= $a andalso H =< $z) orelse
+  (H >= $A andalso H =< $Z) orelse
+  (H >= $0 andalso H =< $9) orelse
+  H == $_ orelse
+  H == $. orelse
+  H == $- orelse
+  H == $/ orelse
+  H == $: ->
+    url_encode(T, <<Acc/binary, H>>);
+url_encode(<<H:8, T/binary>>, Acc) ->
+    case integer_to_list(H, 16) of
+	[X, Y] -> url_encode(T, <<Acc/binary, $%, X, Y>>);
+	[X] -> url_encode(T, <<Acc/binary, $%, $0, X>>)
+    end;
+url_encode(<<>>, Acc) ->
+    Acc.
+
 -spec set_node_id(string(), binary()) -> pid().
 set_node_id(PidStr, NodeBin) ->
     ExtPidStr = erlang:pid_to_list(
@@ -230,3 +293,14 @@ set_node_id(PidStr, NodeBin) ->
     [H|_] = string:tokens(ExtPidStr, "."),
     [_|T] = string:tokens(PidStr, "."),
     erlang:list_to_pid(string:join([H|T], ".")).
+
+-spec read_file(file:filename()) -> {ok, binary()} | {error, file:posix()}.
+read_file(Path) ->
+    case file:read_file(Path) of
+	{ok, Data} ->
+	    {ok, Data};
+	{error, Why} = Err ->
+	    ?ERROR_MSG("Failed to read file ~s: ~s",
+		       [Path, file:format_error(Why)]),
+	    Err
+    end.

@@ -5,7 +5,7 @@
 %%% Created :  8 Dec 2004 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,6 +39,7 @@
 	 sql_bloc/2,
          abort/1,
          restart/1,
+         use_new_schema/0,
          sql_query_to_iolist/1,
 	 escape/1,
          standard_escape/1,
@@ -94,6 +95,12 @@
 -define(KEEPALIVE_QUERY, [<<"SELECT 1;">>]).
 
 -define(PREPARE_KEY, ejabberd_sql_prepare).
+
+-ifdef(NEW_SQL_SCHEMA).
+-define(USE_NEW_SCHEMA_DEFAULT, true).
+-else.
+-define(USE_NEW_SCHEMA_DEFAULT, false).
+-endif.
 
 %%-define(DBGFSM, true).
 
@@ -158,18 +165,24 @@ sql_call(Host, Msg) ->
         case ejabberd_sql_sup:get_random_pid(Host) of
           none -> {error, <<"Unknown Host">>};
           Pid ->
-            p1_fsm:sync_send_event(Pid,{sql_cmd, Msg,
-                                            p1_time_compat:monotonic_time(milli_seconds)},
-                                       query_timeout(Host))
+		sync_send_event(Pid,{sql_cmd, Msg,
+				     p1_time_compat:monotonic_time(milli_seconds)},
+				query_timeout(Host))
           end;
       _State -> nested_op(Msg)
     end.
 
 keep_alive(Host, PID) ->
-    p1_fsm:sync_send_event(PID,
-			       {sql_cmd, {sql_query, ?KEEPALIVE_QUERY},
-                                p1_time_compat:monotonic_time(milli_seconds)},
-			       query_timeout(Host)).
+    sync_send_event(PID,
+		    {sql_cmd, {sql_query, ?KEEPALIVE_QUERY},
+		     p1_time_compat:monotonic_time(milli_seconds)},
+		    query_timeout(Host)).
+
+sync_send_event(Pid, Msg, Timeout) ->
+    try p1_fsm:sync_send_event(Pid, Msg, Timeout)
+    catch _:{Reason, {p1_fsm, _, _}} ->
+	    {error, Reason}
+    end.
 
 -spec sql_query_t(sql_query()) -> sql_query_result().
 
@@ -266,10 +279,14 @@ sqlite_file(Host) ->
 	    binary_to_list(File)
     end.
 
+use_new_schema() ->
+    ejabberd_config:get_option(new_sql_schema, ?USE_NEW_SCHEMA_DEFAULT).
+
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_fsm
 %%%----------------------------------------------------------------------
 init([Host, StartInterval]) ->
+    process_flag(trap_exit, true),
     case ejabberd_config:get_option({sql_keepalive_interval, Host}) of
         undefined ->
             ok;
@@ -1053,7 +1070,10 @@ init_mssql(Host) ->
     end.
 
 tmp_dir() ->
-    filename:join(["/tmp", "ejabberd"]).
+    case os:type() of
+	{win32, _} -> filename:join([os:getenv("HOME"), "conf"]);
+	_ -> filename:join(["/tmp", "ejabberd"])
+    end.
 
 odbc_config() ->
     filename:join(tmp_dir(), "odbc.ini").
@@ -1074,6 +1094,8 @@ query_timeout(LServer) ->
     timer:seconds(
       ejabberd_config:get_option({sql_query_timeout, LServer}, 60)).
 
+check_error({error, Why} = Err, _Query) when Why == killed ->
+    Err;
 check_error({error, Why} = Err, #sql_query{} = Query) ->
     ?ERROR_MSG("SQL query '~s' at ~p failed: ~p",
                [Query#sql_query.hash, Query#sql_query.loc, Why]),
@@ -1121,9 +1143,11 @@ opt_type(sql_connect_timeout) ->
     fun (I) when is_integer(I), I > 0 -> I end;
 opt_type(sql_queue_type) ->
     fun(ram) -> ram; (file) -> file end;
+opt_type(new_sql_schema) -> fun(B) when is_boolean(B) -> B end;
 opt_type(_) ->
     [sql_database, sql_keepalive_interval,
      sql_password, sql_port, sql_server,
      sql_username, sql_ssl, sql_ssl_verify, sql_ssl_certfile,
      sql_ssl_cafile, sql_queue_type, sql_query_timeout,
-     sql_connect_timeout].
+     sql_connect_timeout,
+     new_sql_schema].

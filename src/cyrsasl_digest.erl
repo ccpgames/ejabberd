@@ -5,7 +5,7 @@
 %%% Created : 11 Mar 2003 by Alexey Shchepin <alexey@sevcom.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -59,8 +59,8 @@
 
 start(_Opts) ->
     Fqdn = get_local_fqdn(),
-    ?INFO_MSG("FQDN used to check DIGEST-MD5 SASL authentication: ~s",
-	      [Fqdn]),
+    ?DEBUG("FQDN used to check DIGEST-MD5 SASL authentication: ~s",
+	   [Fqdn]),
     cyrsasl:register_mechanism(<<"DIGEST-MD5">>, ?MODULE,
 			       digest).
 

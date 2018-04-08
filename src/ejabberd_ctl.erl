@@ -5,7 +5,7 @@
 %%% Created : 11 Jan 2004 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -133,7 +133,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%-----------------------------
-%% ejabberdctl Command managment
+%% ejabberdctl Command management
 %%-----------------------------
 
 register_commands(CmdDescs, Module, Function) ->
@@ -866,7 +866,7 @@ print(Format, Args) ->
     io:format(lists:flatten(Format), Args).
 
 %%-----------------------------
-%% Command managment
+%% Command management
 %%-----------------------------
 
 %%+++

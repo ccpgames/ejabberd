@@ -5,7 +5,7 @@
 %%% Created : 23 Nov 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,7 +35,7 @@
 	 check_password/6, check_password_with_authmodule/4,
 	 check_password_with_authmodule/6, try_register/3,
 	 get_users/0, get_users/1, password_to_scram/1,
-	 get_users/2, export/1, import_info/0,
+	 get_users/2, import_info/0,
 	 count_users/1, import/5, import_start/2,
 	 count_users/2, get_password/2,
 	 get_password_s/2, get_password_with_authmodule/2,
@@ -526,7 +526,10 @@ db_get_password(User, Server, Mod) ->
     UseCache = use_cache(Mod, Server),
     case erlang:function_exported(Mod, get_password, 2) of
 	false when UseCache ->
-	    ets_cache:lookup(?AUTH_CACHE, {User, Server});
+	    case ets_cache:lookup(?AUTH_CACHE, {User, Server}) of
+		{ok, exists} -> error;
+		Other -> Other
+	    end;
 	false ->
 	    error;
 	true when UseCache ->
@@ -544,7 +547,20 @@ db_user_exists(User, Server, Mod) ->
 	error ->
 	    case Mod:store_type(Server) of
 		external ->
-		    Mod:user_exists(User, Server);
+		    case ets_cache:lookup(
+			   ?AUTH_CACHE, {User, Server},
+			   fun() ->
+				   case Mod:user_exists(User, Server) of
+				       true -> {ok, exists};
+				       false -> error;
+				       {error, _} = Err -> Err
+				   end
+			   end) of
+			{ok, _} ->
+			    true;
+			error ->
+			    false
+		    end;
 		_ ->
 		    false
 	    end
@@ -568,7 +584,7 @@ db_check_password(User, AuthzId, Server, ProvidedPassword,
 				       false ->
 					   error
 				   end
-			   end, cache_nodes(Mod, Server)) of
+			   end) of
 			{ok, _} ->
 			    true;
 			error ->
@@ -735,8 +751,8 @@ auth_modules(Server) ->
     LServer = jid:nameprep(Server),
     Default = ejabberd_config:default_db(LServer, ?MODULE),
     Methods = ejabberd_config:get_option({auth_method, LServer}, [Default]),
-    [misc:binary_to_atom(<<"ejabberd_auth_",
-			   (misc:atom_to_binary(M))/binary>>)
+    [ejabberd:module_name([<<"ejabberd">>, <<"auth">>,
+			   misc:atom_to_binary(M)])
      || M <- Methods].
 
 -spec match_passwords(password(), password(),
@@ -797,9 +813,6 @@ validate_credentials(User, Server, Password) ->
 		    end
 	    end
     end.
-
-export(Server) ->
-    ejabberd_auth_mnesia:export(Server).
 
 import_info() ->
     [{<<"users">>, 3}].

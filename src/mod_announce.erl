@@ -5,7 +5,7 @@
 %%% Created : 11 Aug 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2018   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -36,7 +36,7 @@
 	 import_start/2, import/5, announce/1, send_motd/1, disco_identity/5,
 	 disco_features/5, disco_items/5, depends/2,
 	 send_announcement_to_all/3, announce_commands/4,
-	 announce_items/4, mod_opt_type/1, clean_cache/1]).
+	 announce_items/4, mod_opt_type/1, mod_options/1, clean_cache/1]).
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3]).
 -export([announce_all/1,
@@ -715,7 +715,8 @@ send_motd({#presence{type = available},
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     case get_motd(Mod, LServer) of
 	{ok, Packet} ->
-	    try xmpp:decode(Packet, ?NS_CLIENT, [ignore_els]) of
+	    CodecOpts = ejabberd_config:codec_options(LServer),
+	    try xmpp:decode(Packet, ?NS_CLIENT, CodecOpts) of
 		Msg ->
 		    case is_motd_user(Mod, LUser, LServer) of
 			false ->
@@ -806,7 +807,8 @@ get_stored_motd(LServer) ->
     Mod = gen_mod:db_mod(LServer, ?MODULE),
     case get_motd(Mod, LServer) of
         {ok, Packet} ->
-	    try xmpp:decode(Packet, ?NS_CLIENT, [ignore_els]) of
+	    CodecOpts = ejabberd_config:codec_options(LServer),
+	    try xmpp:decode(Packet, ?NS_CLIENT, CodecOpts) of
 		#message{body = Body, subject = Subject} ->
 		    {xmpp:get_text(Subject), xmpp:get_text(Body)}
 	    catch _:{xmpp_codec, Why} ->
@@ -834,7 +836,7 @@ send_announcement_to_all(Host, SubjectS, BodyS) ->
 -spec get_access(global | binary()) -> atom().
 
 get_access(Host) ->
-    gen_mod:get_module_opt(Host, ?MODULE, access, none).
+    gen_mod:get_module_opt(Host, ?MODULE, access).
 
 -spec add_store_hint(stanza()) -> stanza().
 add_store_hint(El) ->
@@ -850,23 +852,17 @@ route_forbidden_error(Packet) ->
 init_cache(Mod, Host, Opts) ->
     case use_cache(Mod, Host) of
 	true ->
-	    CacheOpts = cache_opts(Host, Opts),
+	    CacheOpts = cache_opts(Opts),
 	    ets_cache:new(?MOTD_CACHE, CacheOpts);
 	false ->
 	    ets_cache:delete(?MOTD_CACHE)
     end.
 
--spec cache_opts(binary(), gen_mod:opts()) -> [proplists:property()].
-cache_opts(Host, Opts) ->
-    MaxSize = gen_mod:get_opt(
-		cache_size, Opts,
-		ejabberd_config:cache_size(Host)),
-    CacheMissed = gen_mod:get_opt(
-		    cache_missed, Opts,
-		    ejabberd_config:cache_missed(Host)),
-    LifeTime = case gen_mod:get_opt(
-		      cache_life_time, Opts,
-		      ejabberd_config:cache_life_time(Host)) of
+-spec cache_opts(gen_mod:opts()) -> [proplists:property()].
+cache_opts(Opts) ->
+    MaxSize = gen_mod:get_opt(cache_size, Opts),
+    CacheMissed = gen_mod:get_opt(cache_missed, Opts),
+    LifeTime = case gen_mod:get_opt(cache_life_time, Opts) of
 		   infinity -> infinity;
 		   I -> timer:seconds(I)
 	       end,
@@ -876,10 +872,7 @@ cache_opts(Host, Opts) ->
 use_cache(Mod, Host) ->
     case erlang:function_exported(Mod, use_cache, 1) of
 	true -> Mod:use_cache(Host);
-	false ->
-	    gen_mod:get_module_opt(
-	      Host, ?MODULE, use_cache,
-	      ejabberd_config:use_cache(Host))
+	false -> gen_mod:get_module_opt(Host, ?MODULE, use_cache)
     end.
 
 -spec cache_nodes(module(), binary()) -> [node()].
@@ -918,7 +911,12 @@ mod_opt_type(O) when O == cache_life_time; O == cache_size ->
         (infinity) -> infinity
     end;
 mod_opt_type(O) when O == use_cache; O == cache_missed ->
-    fun (B) when is_boolean(B) -> B end;
-mod_opt_type(_) ->
-    [access, db_type, cache_life_time, cache_size,
-     use_cache, cache_missed].
+    fun (B) when is_boolean(B) -> B end.
+
+mod_options(Host) ->
+    [{access, none},
+     {db_type, ejabberd_config:default_db(Host, ?MODULE)},
+     {use_cache, ejabberd_config:use_cache(Host)},
+     {cache_size, ejabberd_config:cache_size(Host)},
+     {cache_missed, ejabberd_config:cache_missed(Host)},
+     {cache_life_time, ejabberd_config:cache_life_time(Host)}].

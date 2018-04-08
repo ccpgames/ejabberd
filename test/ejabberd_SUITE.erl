@@ -210,6 +210,7 @@ init_per_testcase(stop_ejabberd, Config) ->
 			set_opt(anonymous, true, Config)),
     open_session(bind(auth(connect(NewConfig))));
 init_per_testcase(TestCase, OrigConfig) ->
+    ct:print(80, "Testcase '~p' starting", [TestCase]),
     Test = atom_to_list(TestCase),
     IsMaster = lists:suffix("_master", Test),
     IsSlave = lists:suffix("_slave", Test),
@@ -460,6 +461,7 @@ db_tests(_) ->
        muc_tests:single_cases(),
        offline_tests:single_cases(),
        mam_tests:single_cases(),
+       push_tests:single_cases(),
        test_unregister]},
      muc_tests:master_slave_cases(),
      privacy_tests:master_slave_cases(),
@@ -469,7 +471,8 @@ db_tests(_) ->
      mam_tests:master_slave_cases(),
      vcard_tests:master_slave_cases(),
      announce_tests:master_slave_cases(),
-     carbons_tests:master_slave_cases()].
+     carbons_tests:master_slave_cases(),
+     push_tests:master_slave_cases()].
 
 ldap_tests() ->
     [{ldap_tests, [sequence],
@@ -918,12 +921,12 @@ presence_broadcast(Config) ->
     %% 2) welcome message
     %% 3) presence broadcast
     IQ = #iq{type = get,
-	     from = ServerJID,
+	     from = JID,
 	     sub_els = [#disco_info{node = Node}]} = recv_iq(Config),
     #message{type = normal} = recv_message(Config),
     #presence{from = JID, to = JID} = recv_presence(Config),
     send(Config, #iq{type = result, id = IQ#iq.id,
-		     to = ServerJID, sub_els = [Info]}),
+		     to = JID, sub_els = [Info]}),
     %% We're trying to read our feature from ejabberd database
     %% with exponential back-off as our IQ response may be delayed.
     [Feature] =
@@ -995,17 +998,17 @@ private(Config) ->
     WrongEl = #xmlel{name = <<"wrong">>},
     #iq{type = error} =
         send_recv(Config, #iq{type = get,
-			      sub_els = [#private{xml_els = [WrongEl]}]}),
+			      sub_els = [#private{sub_els = [WrongEl]}]}),
     #iq{type = result, sub_els = []} =
         send_recv(
           Config, #iq{type = set,
-                      sub_els = [#private{xml_els = [WrongEl, StorageXMLOut]}]}),
+                      sub_els = [#private{sub_els = [WrongEl, StorageXMLOut]}]}),
     #iq{type = result,
-        sub_els = [#private{xml_els = [StorageXMLIn]}]} =
+        sub_els = [#private{sub_els = [StorageXMLIn]}]} =
         send_recv(
           Config,
           #iq{type = get,
-              sub_els = [#private{xml_els = [xmpp:encode(
+              sub_els = [#private{sub_els = [xmpp:encode(
                                                #bookmark_storage{})]}]}),
     Storage = xmpp:decode(StorageXMLIn),
     disconnect(Config).

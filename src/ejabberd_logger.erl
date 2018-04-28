@@ -143,7 +143,6 @@ do_start() ->
     application:set_env(
       lager, handlers,
       [{lager_console_backend, error},
-       {lager_loggly_backend, info},
        {lager_file_backend, [{file, ConsoleLog}, {level, info}, {date, LogRotateDate},
                              {count, LogRotateCount}, {size, LogRotateSize}]},
        {lager_file_backend, [{file, ErrorLog}, {level, error}, {date, LogRotateDate},

@@ -55,15 +55,16 @@ handle_event({log, Message}, #state{level=Level} = State) ->
             case NewState#state.loggly_url of
                 undefined -> ok;
                 _ ->
-                    EscapedQuotes = re:replace(lager_msg:message(Message), "\"", "\\\\\"", [global, {return, list}]),
-                    NoNewlines = re:replace(EscapedQuotes, "\n", "\\n", [global, {return, list}]),
+                    MessageAsBinary = list_to_binary(lager_msg:message(Message)),
+                    MessageAsBinary2 = binary:replace(MessageAsBinary, <<"\"">>, <<"'">>, [global]),
+                    MessageAsBinary3 = binary:replace(MessageAsBinary2, <<"\\">>, <<"">>, [global]),
+                    MessageAsBinary4 = binary:replace(MessageAsBinary3, <<"\n">>, <<"\\n">>, [global]),
                     Proplist = metadata_to_binary_proplist(
                         lager_msg:metadata(Message), [
                             {<<"level">>, logutils:any_to_binary(lager_msg:severity(Message))},
-                            {<<"message">>, logutils:any_to_binary(NoNewlines)}
+                            {<<"message">>, MessageAsBinary4}
                         ]),
                     Payload = logutils:proplist_to_json(Proplist),
-                    erlang:display(Payload),
                     Request = {NewState#state.loggly_url, [{"te", "chunked"}], "application/json", Payload},
                     httpc:request(post, Request, [], [{body_format, binary}])
             end,

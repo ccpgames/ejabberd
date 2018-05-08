@@ -60,9 +60,9 @@ init([Host, _Opts]) ->
 	ejabberd_hooks:add(filter_packet, global, ?MODULE, filter_packet, 0),
     
     catch ets:new(compiled_regexes, [named_table, public, set]),
-    erlang:send_after(timer:seconds(5), self(), {fetch_regex, Host}),
+    erlang:send_after(timer:seconds(5), self(), {fetch_regex, Host, _Opts}),
     catch ets:new(bw_replacewords, [named_table, public, set]),
-    erlang:send_after(timer:seconds(5), self(), {fetch_replace, Host}),
+    erlang:send_after(timer:seconds(5), self(), {fetch_replace, Host, _Opts}),
     {ok, #state{host = Host}}.
 
 handle_call(_Request, _From, State) ->
@@ -73,15 +73,15 @@ handle_cast(_Msg, State) ->
     ?ERROR_MSG("got unexpected cast = ~p", [_Msg]),
     {noreply, State}.
 
-handle_info({fetch_regex, Host}, State) ->
+handle_info({fetch_regex, Host, _Opts}, State) ->
     %% Fetch the regex list from the web service
-    fetch_regex(Host),
-    erlang:send_after(?FETCH_INTERVAL, self(), {fetch_regex, Host}),
+    fetch_regex(Host, _Opts),
+    erlang:send_after(?FETCH_INTERVAL, self(), {fetch_regex, Host, _Opts}),
     {noreply, State};
 
-handle_info({fetch_replace, Host}, State) ->
-    fetch_replacewords(Host),
-	erlang:send_after(?FETCH_INTERVAL, self(), {fetch_replace, Host}),
+handle_info({fetch_replace, Host, _Opts}, State) ->
+    fetch_replacewords(Host, _Opts),
+	erlang:send_after(?FETCH_INTERVAL, self(), {fetch_replace, Host, _Opts}),
     {noreply, State};
 	
 handle_info(_Info, State) ->
@@ -138,9 +138,9 @@ remove_deleted_pattern_from_ets([], _) -> [].
 get_replacewords_from_ets() ->
     ets:lookup_element(bw_replacewords, <<"ReplaceWords">>, 2).
 
--spec fetch_replacewords(binary()) -> ok.
-fetch_replacewords(Host) ->
-    Replace_EndPoint = ejabberd_config:get_option({bannedwords_replace_endpoint, Host}, <<"http://10.3.20.61:8000/banned_words/replaceword/">>),
+-spec fetch_replacewords(binary(), binary()) -> ok.
+fetch_replacewords(Host, _Opts) ->
+    Replace_EndPoint = gen_mod:get_module_opt(Host, ?MODULE, bannedwords_replace_endpoint, <<"http://10.3.20.61:8000/banned_words/replaceword/">>),
     ?DEBUG("Fetching replacement words from ~n~s", [Replace_EndPoint]),
     {Status, ResultOrReason} = httpc:request(binary_to_list(Replace_EndPoint)),
     case Status of
@@ -159,9 +159,9 @@ fetch_replacewords(Host) ->
 	    ?ERROR_MSG("Error connecting to ~s to fetch replacement ~n~w", [Replace_EndPoint, Status])
     end.
 
--spec fetch_regex(binary()) -> ok.
-fetch_regex(Host) ->
-    Regexes_EndPoint = ejabberd_config:get_option({bannedwords_regex_endpoint, Host}, <<"http://10.3.20.61:8000/banned_words/regexes/">>),
+-spec fetch_regex(binary(), binary()) -> ok.
+fetch_regex(Host, _Opts) ->
+    Regexes_EndPoint = gen_mod:get_module_opt(Host, ?MODULE, bannedwords_regex_endpoint, <<"http://10.3.20.61:8000/banned_words/regexes/">>),
     ?DEBUG("Fetching Regexes from ~n~s", [Regexes_EndPoint]),
     
     {Status, ResultOrReason} = httpc:request(binary_to_list(Regexes_EndPoint)),

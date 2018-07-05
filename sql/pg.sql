@@ -99,26 +99,7 @@ CREATE TABLE archive (
     kind text,
     nick text,
     created_at TIMESTAMP NOT NULL DEFAULT now()
-);
-
-CREATE INDEX i_username ON archive USING btree (username);
-CREATE INDEX i_timestamp ON archive USING btree (timestamp);
-CREATE INDEX i_peer ON archive USING btree (peer);
-CREATE INDEX i_bare_peer ON archive USING btree (bare_peer);
-CREATE INDEX i_created_at ON archive USING btree (created_at);
-
-CREATE OR REPLACE FUNCTION delete_obsolete_archive_rows() RETURNS trigger AS
-$BODY$
-BEGIN
-    DELETE FROM archive where archive.created_at < (now() - INTERVAL '30 days');
-    RETURN NULL;
-END;
-$BODY$
-LANGUAGE 'plpgsql';
-
-CREATE TRIGGER trigger_delete_obsolete_archive_rows
-    AFTER INSERT on archive
-    EXECUTE PROCEDURE delete_obsolete_archive_rows();
+) partition by range (created_at);
 
 
 CREATE TABLE archive_prefs (
